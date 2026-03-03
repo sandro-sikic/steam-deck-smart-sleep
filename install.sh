@@ -3,7 +3,7 @@
 #
 # Installer for the shutdown-after-sleep systemd sleep hook.
 # The hook script and helper units live in sibling files alongside this
-# installer; running the script copies them into ~/steam-deck-auto-off and creates
+# installer; running the script copies them into ~/steam-deck-smart-sleep and creates
 # symlinks from the system locations.
 #
 # Usage (once as root on your Steam Deck):
@@ -38,7 +38,7 @@ if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
 else
     USER_HOME="$HOME"
 fi
-SLEEP_FIX_DIR="$USER_HOME/steam-deck-auto-off"
+SLEEP_FIX_DIR="$USER_HOME/steam-deck-smart-sleep"
 HOOK_DEST="$SLEEP_FIX_DIR/$(basename "$TARGET_SCRIPT")"
 
 # The systemd service always re-runs the persistent copy stored in SLEEP_FIX_DIR,
@@ -68,7 +68,7 @@ fi
 # When invoked via `curl | bash` the sibling files are not present on disk.
 # Detect this and fetch them from GitHub into a temporary directory.
 
-GITHUB_RAW="https://raw.githubusercontent.com/sandro-sikic/steam-deck-auto-off/main"
+GITHUB_RAW="https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main"
 FILES_DIR="$SCRIPT_DIR"
 TMP_DIR=""
 

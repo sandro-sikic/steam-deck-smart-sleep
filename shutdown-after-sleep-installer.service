@@ -1,5 +1,5 @@
 [Unit]
-Description=Reinstall shutdown-after-sleep hook after SteamOS update
+Description=Reinstall shutdown-after-sleep hook (steam-deck-smart-sleep) after SteamOS update
 After=local-fs.target
 
 [Service]
