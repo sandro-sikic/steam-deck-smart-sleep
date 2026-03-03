@@ -6,7 +6,7 @@
 #
 # When the machine is about to suspend the system (sleep/hibernate),
 # systemd will invoke this script with the first argument "pre".
-# At that point we calculate a wakeup time 30 seconds in the future
+# At that point we calculate a wakeup time 10800 seconds in the future
 # and programme the RTC accordingly.  We persist the target time in
 # a temporary file so that on resume we can tell whether we actually
 # woke because the timer expired or because the user intervened.
@@ -31,7 +31,7 @@ LOGFILE="/var/log/steam-deck-smart-sleep.log"
 
 # how many seconds after suspend to schedule the RTC alarm
 # value embedded by the installer at install time
-WAKE_DELAY=30
+WAKE_DELAY=10800
 
 # helper for appending timestamped messages to log
 log_msg() {

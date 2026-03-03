@@ -22,7 +22,7 @@ After installation, the hook is automatically reinstalled on every boot via a sy
 
 ## Configuration
 
-The shutdown delay after wake is hard-coded in `steam-deck-smart-sleep.sh` (default: **30 seconds**). To change it, edit the file in your `~/steam-deck-smart-sleep` directory.
+The shutdown delay after wake is hard-coded in `steam-deck-smart-sleep.sh` (default: **10800 seconds**). To change it, edit the file in your `~/steam-deck-smart-sleep` directory.
 
 ## Installation Path
 
