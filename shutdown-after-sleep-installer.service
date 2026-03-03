@@ -1,0 +1,8 @@
+[Unit]
+Description=Reinstall shutdown-after-sleep hook after SteamOS update
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=__INSTALL_SCRIPT__
+RemainAfterExit=yes

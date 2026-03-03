@@ -30,7 +30,7 @@ set -euo pipefail
 LOGFILE="/var/log/shutdown-after-sleep.log"
 
 # how many seconds after suspend to schedule the RTC alarm
-# users can adjust this value as needed (default 30 seconds)
+# value embedded by the installer at install time
 WAKE_DELAY=30
 
 # helper for appending timestamped messages to log
@@ -113,5 +113,3 @@ case "${1:-}" in
         exit 1
         ;;
 esac
-
-

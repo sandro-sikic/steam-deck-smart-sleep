@@ -1,15 +1,17 @@
 #!/bin/bash
 # install.sh
 #
-# Self-contained installer for the shutdown-after-sleep systemd sleep hook.
-# The hook script is embedded below as a heredoc — no separate file needed.
+# Installer for the shutdown-after-sleep systemd sleep hook.
+# The hook script and helper units live in sibling files alongside this
+# installer; running the script copies them into ~/steam-deck-auto-off and creates
+# symlinks from the system locations.
 #
-# Run once as root on your Steam Deck:
+# Usage (once as root on your Steam Deck):
 #   sudo bash install.sh
 #
-# On the first run the hook is installed and this script registers itself as
-# a systemd boot timer so the installation is automatically re-applied after
-# every SteamOS update (which resets the read-only root filesystem).
+# After the first run the hook is installed and this script registers itself
+# as a systemd boot timer so the installation is automatically re-applied
+# after every SteamOS update (which resets the read-only root filesystem).
 
 set -euo pipefail
 
@@ -17,17 +19,28 @@ set -euo pipefail
 # Configuration — adjust before running
 # ---------------------------------------------------------------------------
 
-# How many seconds after suspend to schedule the RTC wakeup alarm.
-# The installer will embed this value into the deployed hook script.
-WAKE_DELAY=30
+# (wake delay is now fixed in the template script; edit
+# shutdown-after-sleep.sh directly if you need to change it)
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 
 INSTALL_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$INSTALL_SCRIPT")"
 TARGET_DIR="/usr/lib/systemd/system-sleep"
 TARGET_SCRIPT="$TARGET_DIR/shutdown-after-sleep.sh"
+
+# Directory under the user's home where the real files will live. When the
+# installer is invoked with sudo we prefer the invoking user's home rather
+# than /root so that the files are easy to inspect and modify later.
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    USER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+else
+    USER_HOME="$HOME"
+fi
+SLEEP_FIX_DIR="$USER_HOME/steam-deck-auto-off"
+HOOK_DEST="$SLEEP_FIX_DIR/$(basename "$TARGET_SCRIPT")"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,125 +64,13 @@ fi
 # ---------------------------------------------------------------------------
 
 write_hook() {
-    # Quoted delimiter keeps all hook variables literal; WAKE_DELAY is
-    # substituted with the installer's value via sed after writing.
-    cat > "$TARGET_SCRIPT" << 'HOOK_EOF'
-#!/bin/bash
-# shutdown-after-sleep.sh
-#
-# This script is intended to run on a Steam Deck (or other
-# Linux system with an RTC) as a systemd "system-sleep" hook.
-#
-# When the machine is about to suspend the system (sleep/hibernate),
-# systemd will invoke this script with the first argument "pre".
-# At that point we calculate a wakeup time 30 seconds in the future
-# and programme the RTC accordingly.  We persist the target time in
-# a temporary file so that on resume we can tell whether we actually
-# woke because the timer expired or because the user intervened.
-#
-# After coming back from sleep systemd calls the script again with
-# argument "post".  In that case we compare the current time against
-# the stored wake time:
-#   * if the clock has already passed the scheduled value we assume
-#     the machine woke up via the RTC alarm and immediately request a
-#     clean shutdown via systemctl.
-#   * if the system came back early we simply clear the alarm so it
-#     won't fire later and remove the marker file.
-#
-# To install, copy this file to /usr/lib/systemd/system-sleep/ or
-# /etc/systemd/system-sleep/ and ensure it is executable.  It runs as
-# root during suspend/resume.
-
-set -euo pipefail
-
-# path for log file; root should be able to write here
-LOGFILE="/var/log/shutdown-after-sleep.log"
-
-# how many seconds after suspend to schedule the RTC alarm
-# value embedded by the installer at install time
-WAKE_DELAY=__WAKE_DELAY__
-
-# helper for appending timestamped messages to log
-log_msg() {
-    local msg="$*"
-    printf '%s %s\n' "$(date --iso-8601=seconds)" "$msg" >> "$LOGFILE" 2>/dev/null || true
-}
-
-TMPMARK="/run/rtc_shutdown_wake"   # tmpfs, removed on reboot
-RTCWAKE="/sys/class/rtc/rtc0/wakealarm"
-
-schedule_alarm() {
-    # clear any existing value first
-    echo 0 > "$RTCWAKE"
-
-    # compute the epoch timestamp WAKE_DELAY seconds from now
-    local when
-    when=$(date +%s --date="+$WAKE_DELAY seconds")
-    echo "$when" > "$TMPMARK"
-
-    log_msg "scheduled wakeup at $when (delay=$WAKE_DELAY)"
-
-    # program the RTC (use -t to write absolute time)
-    # rtcwake with "no" mode only sets the alarm, it does not
-    # actually suspend the machine; systemd will handle the actual
-    # sleep.
-    # ensure rtcwake is available at expected location
-    if [ ! -x "/usr/bin/rtcwake" ]; then
-        log_msg "rtcwake not found at /usr/bin/rtcwake"
-        echo "rtcwake not found at /usr/bin/rtcwake" >&2
-        return 1
-    fi
-    /usr/bin/rtcwake -m no -t "$when" >/dev/null 2>&1
-}
-
-clear_alarm() {
-    echo 0 > "$RTCWAKE" || true
-    log_msg "cleared RTC alarm"
-}
-
-handle_pre() {
-    log_msg "handling pre-sleep"
-    schedule_alarm
-}
-
-handle_post() {
-    log_msg "handling post-sleep"
-    if [ -f "$TMPMARK" ]; then
-        local scheduled now
-        scheduled=$(cat "$TMPMARK")
-        rm -f "$TMPMARK"
-        now=$(date +%s)
-
-        log_msg "wake time was $scheduled, now is $now"
-
-        if [ "$now" -ge "$scheduled" ]; then
-            # timer elapsed while we were asleep; initiate shutdown
-            log_msg "timer elapsed, initiating shutdown sequence"
-            /usr/bin/systemctl cancel
-            /usr/bin/systemctl poweroff 2>&1 | tee -a "$LOGFILE"
-        else
-            # woke early; cancel the alarm so it doesn't fire later
-            log_msg "woke early, cancelling alarm"
-            clear_alarm
-        fi
-    else
-        log_msg "no marker file; nothing to do"
-    fi
-}
-
-case "${1:-}" in
-    pre)
-        handle_pre
-        ;;
-    post)
-        handle_post
-        ;;
-    *)
-        echo "Usage: $0 {pre|post}" >&2
+    # Copy the templated hook script out of the installer directory into
+    # the home storage area.
+    if [ ! -r "$SCRIPT_DIR/shutdown-after-sleep.sh" ]; then
+        error "template hook script not found at $SCRIPT_DIR/shutdown-after-sleep.sh"
         exit 1
-        ;;
-esac
-HOOK_EOF
+    fi
+    cp "$SCRIPT_DIR/shutdown-after-sleep.sh" "$HOOK_DEST"
 }
 
 # ---------------------------------------------------------------------------
@@ -179,24 +80,33 @@ HOOK_EOF
 info "Disabling SteamOS read-only filesystem..."
 steamos-readonly disable
 
-info "Creating target directory: $TARGET_DIR"
+info "Creating home storage directory: $SLEEP_FIX_DIR"
+mkdir -p "$SLEEP_FIX_DIR"
+
+info "Creating target directory: $TARGET_DIR"  # required for the symlink
 mkdir -p "$TARGET_DIR"
 
-info "Writing shutdown-after-sleep.sh -> $TARGET_SCRIPT"
+info "Writing shutdown-after-sleep.sh -> $HOOK_DEST"
 write_hook
-sed -i "s/__WAKE_DELAY__/$WAKE_DELAY/" "$TARGET_SCRIPT"
-info "Embedded WAKE_DELAY=$WAKE_DELAY into hook script"
 
-info "Setting ownership: root:root"
-chown root:root "$TARGET_SCRIPT"
+info "Setting ownership: root:root on $HOOK_DEST"
+chown root:root "$HOOK_DEST"
 
-info "Setting permissions: 755 (executable)"
-chmod 755 "$TARGET_SCRIPT"
+info "Setting permissions: 755 (executable) on $HOOK_DEST"
+chmod 755 "$HOOK_DEST"
+
+# ensure the system location contains a symlink instead of a real file
+info "Creating symlink at $TARGET_SCRIPT -> $HOOK_DEST"
+if [ -L "$TARGET_SCRIPT" ] || [ -e "$TARGET_SCRIPT" ]; then
+    rm -f "$TARGET_SCRIPT"
+fi
+ln -s "$HOOK_DEST" "$TARGET_SCRIPT"
 
 info "Re-enabling SteamOS read-only filesystem..."
 steamos-readonly enable
 
-info "Installation complete: $TARGET_SCRIPT"
+info "Installation complete: original hook at $HOOK_DEST"
+info "Symlink created at $TARGET_SCRIPT"
 
 # ---------------------------------------------------------------------------
 # Register systemd boot timer (idempotent)
@@ -210,31 +120,47 @@ SERVICE_UNIT="shutdown-after-sleep-installer.service"
 TIMER_UNIT="shutdown-after-sleep-installer.timer"
 SYSTEMD_DIR="/etc/systemd/system"
 
-info "Writing systemd service unit: $SYSTEMD_DIR/$SERVICE_UNIT"
+# locations where we will keep the real unit files
+SERVICE_DEST="$SLEEP_FIX_DIR/$SERVICE_UNIT"
+TIMER_DEST="$SLEEP_FIX_DIR/$TIMER_UNIT"
+
+info "Writing systemd service unit (home): $SERVICE_DEST"
+mkdir -p "$SLEEP_FIX_DIR"
+if [ ! -r "$SCRIPT_DIR/shutdown-after-sleep-installer.service" ]; then
+    error "template service unit not found at $SCRIPT_DIR/shutdown-after-sleep-installer.service"
+    exit 1
+fi
+cp "$SCRIPT_DIR/shutdown-after-sleep-installer.service" "$SERVICE_DEST"
+# substitute the dynamic exec path
+sed -i "s|__INSTALL_SCRIPT__|$INSTALL_SCRIPT|" "$SERVICE_DEST"
+
+info "Setting ownership and permissions on $SERVICE_DEST"
+chown root:root "$SERVICE_DEST"
+chmod 644 "$SERVICE_DEST"
+
+info "Linking service unit into $SYSTEMD_DIR"
 mkdir -p "$SYSTEMD_DIR"
-cat > "$SYSTEMD_DIR/$SERVICE_UNIT" << EOF
-[Unit]
-Description=Reinstall shutdown-after-sleep hook after SteamOS update
-After=local-fs.target
+if [ -L "$SYSTEMD_DIR/$SERVICE_UNIT" ] || [ -e "$SYSTEMD_DIR/$SERVICE_UNIT" ]; then
+    rm -f "$SYSTEMD_DIR/$SERVICE_UNIT"
+fi
+ln -s "$SERVICE_DEST" "$SYSTEMD_DIR/$SERVICE_UNIT"
 
-[Service]
-Type=oneshot
-ExecStart=$INSTALL_SCRIPT
-RemainAfterExit=yes
-EOF
+info "Writing systemd timer unit (home): $TIMER_DEST"
+if [ ! -r "$SCRIPT_DIR/shutdown-after-sleep-installer.timer" ]; then
+    error "template timer unit not found at $SCRIPT_DIR/shutdown-after-sleep-installer.timer"
+    exit 1
+fi
+cp "$SCRIPT_DIR/shutdown-after-sleep-installer.timer" "$TIMER_DEST"
 
-info "Writing systemd timer unit: $SYSTEMD_DIR/$TIMER_UNIT"
-cat > "$SYSTEMD_DIR/$TIMER_UNIT" << EOF
-[Unit]
-Description=Run shutdown-after-sleep installer on every boot
+info "Setting ownership and permissions on $TIMER_DEST"
+chown root:root "$TIMER_DEST"
+chmod 644 "$TIMER_DEST"
 
-[Timer]
-OnBootSec=10s
-Unit=$SERVICE_UNIT
-
-[Install]
-WantedBy=timers.target
-EOF
+info "Linking timer unit into $SYSTEMD_DIR"
+if [ -L "$SYSTEMD_DIR/$TIMER_UNIT" ] || [ -e "$SYSTEMD_DIR/$TIMER_UNIT" ]; then
+    rm -f "$SYSTEMD_DIR/$TIMER_UNIT"
+fi
+ln -s "$TIMER_DEST" "$SYSTEMD_DIR/$TIMER_UNIT"
 
 info "Reloading systemd daemon..."
 systemctl daemon-reload
@@ -244,3 +170,4 @@ systemctl enable --now "$TIMER_UNIT"
 info "Timer registered: $TIMER_UNIT"
 
 info "Done. The hook will be automatically reinstalled on every boot."
+
