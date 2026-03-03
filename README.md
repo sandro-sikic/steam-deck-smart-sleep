@@ -15,7 +15,7 @@ Automatically shuts down your Steam Deck (or any similar Linux system) shortly a
 Run the installer once as root:
 
 ```bash
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh)
+curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh | sudo bash
 ```
 
 After installation, the hook is automatically reinstalled on every boot via a systemd timer, so SteamOS updates cannot permanently remove it.
@@ -35,4 +35,4 @@ All files are stored in `$HOME/steam-deck-smart-sleep` (or the home directory of
 
 ## Contributing & License
 
-Issues and pull requests are welcome. The project is distributed under the **MIT License** (see `LICENSE`).
+Issues and pull requests are welcome.

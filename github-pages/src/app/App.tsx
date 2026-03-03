@@ -4,7 +4,7 @@ import { Copy, Check, Github, AlertCircle, Battery, Power } from 'lucide-react';
 export default function App() {
 	const [copied, setCopied] = useState(false);
 	const command =
-		'sudo bash <(curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh)';
+		'curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh | sudo bash';
 
 	const handleCopy = async () => {
 		await navigator.clipboard.writeText(command);
