@@ -1,0 +1,9 @@
+[Unit]
+Description=Run steam-deck-smart-sleep installer on every boot
+
+[Timer]
+OnBootSec=10s
+Unit=steam-deck-smart-sleep-installer.service
+
+[Install]
+WantedBy=timers.target

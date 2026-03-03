@@ -1,9 +1,0 @@
-[Unit]
-Description=Run shutdown-after-sleep installer (steam-deck-smart-sleep) on every boot
-
-[Timer]
-OnBootSec=10s
-Unit=shutdown-after-sleep-installer.service
-
-[Install]
-WantedBy=timers.target

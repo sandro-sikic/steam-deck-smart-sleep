@@ -1,7 +1,7 @@
 #!/bin/bash
 # install.sh
 #
-# Installer for the shutdown-after-sleep systemd sleep hook.
+# Installer for the steam-deck-smart-sleep systemd sleep hook.
 # The hook script and helper units live in sibling files alongside this
 # installer; running the script copies them into ~/steam-deck-smart-sleep and creates
 # symlinks from the system locations.
@@ -20,7 +20,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 # (wake delay is now fixed in the template script; edit
-# shutdown-after-sleep.sh directly if you need to change it)
+# steam-deck-smart-sleep.sh directly if you need to change it)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -28,7 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/tmp}")" && pwd 2>/dev/null || echo "/tmp")"
 TARGET_DIR="/usr/lib/systemd/system-sleep"
-TARGET_SCRIPT="$TARGET_DIR/shutdown-after-sleep.sh"
+TARGET_SCRIPT="$TARGET_DIR/steam-deck-smart-sleep.sh"
 
 # Directory under the user's home where the real files will live. When the
 # installer is invoked with sudo we prefer the invoking user's home rather
@@ -73,9 +73,9 @@ FILES_DIR="$SCRIPT_DIR"
 TMP_DIR=""
 
 _need_download=0
-for _f in shutdown-after-sleep.sh \
-          shutdown-after-sleep-installer.service \
-          shutdown-after-sleep-installer.timer \
+for _f in steam-deck-smart-sleep.sh \
+          steam-deck-smart-sleep-installer.service \
+          steam-deck-smart-sleep-installer.timer \
           install.sh; do
     [ -r "$SCRIPT_DIR/$_f" ] || { _need_download=1; break; }
 done
@@ -84,9 +84,9 @@ if [ "$_need_download" -eq 1 ]; then
     TMP_DIR=$(mktemp -d)
     FILES_DIR="$TMP_DIR"
     info "Sibling files not found locally – downloading from GitHub..."
-    for _f in shutdown-after-sleep.sh \
-              shutdown-after-sleep-installer.service \
-              shutdown-after-sleep-installer.timer \
+    for _f in steam-deck-smart-sleep.sh \
+              steam-deck-smart-sleep-installer.service \
+              steam-deck-smart-sleep-installer.timer \
               install.sh; do
         info "  Downloading $_f"
         curl -fsSL "$GITHUB_RAW/$_f" -o "$TMP_DIR/$_f"
@@ -105,11 +105,11 @@ trap _cleanup EXIT
 write_hook() {
     # Copy the templated hook script out of the installer directory into
     # the home storage area.
-    if [ ! -r "$FILES_DIR/shutdown-after-sleep.sh" ]; then
-        error "template hook script not found at $FILES_DIR/shutdown-after-sleep.sh"
+    if [ ! -r "$FILES_DIR/steam-deck-smart-sleep.sh" ]; then
+        error "template hook script not found at $FILES_DIR/steam-deck-smart-sleep.sh"
         exit 1
     fi
-    cp "$FILES_DIR/shutdown-after-sleep.sh" "$HOOK_DEST"
+    cp "$FILES_DIR/steam-deck-smart-sleep.sh" "$HOOK_DEST"
 }
 
 # ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ chmod 755 "$SLEEP_FIX_DIR/install.sh"
 info "Creating target directory: $TARGET_DIR"  # required for the symlink
 mkdir -p "$TARGET_DIR"
 
-info "Writing shutdown-after-sleep.sh -> $HOOK_DEST"
+info "Writing steam-deck-smart-sleep.sh -> $HOOK_DEST"
 write_hook
 
 info "Setting ownership: root:root on $HOOK_DEST"
@@ -160,8 +160,8 @@ info "Symlink created at $TARGET_SCRIPT"
 # always restored after an update, without further manual intervention.
 # Unit files live under /etc/systemd/system/ which persists across updates.
 
-SERVICE_UNIT="shutdown-after-sleep-installer.service"
-TIMER_UNIT="shutdown-after-sleep-installer.timer"
+SERVICE_UNIT="steam-deck-smart-sleep-installer.service"
+TIMER_UNIT="steam-deck-smart-sleep-installer.timer"
 SYSTEMD_DIR="/etc/systemd/system"
 
 # locations where we will keep the real unit files
@@ -170,11 +170,11 @@ TIMER_DEST="$SLEEP_FIX_DIR/$TIMER_UNIT"
 
 info "Writing systemd service unit (home): $SERVICE_DEST"
 mkdir -p "$SLEEP_FIX_DIR"
-if [ ! -r "$FILES_DIR/shutdown-after-sleep-installer.service" ]; then
-    error "template service unit not found at $FILES_DIR/shutdown-after-sleep-installer.service"
+if [ ! -r "$FILES_DIR/steam-deck-smart-sleep-installer.service" ]; then
+    error "template service unit not found at $FILES_DIR/steam-deck-smart-sleep-installer.service"
     exit 1
 fi
-cp "$FILES_DIR/shutdown-after-sleep-installer.service" "$SERVICE_DEST"
+cp "$FILES_DIR/steam-deck-smart-sleep-installer.service" "$SERVICE_DEST"
 # substitute the dynamic exec path
 sed -i "s|__INSTALL_SCRIPT__|$INSTALL_SCRIPT|" "$SERVICE_DEST"
 
@@ -190,11 +190,11 @@ fi
 ln -s "$SERVICE_DEST" "$SYSTEMD_DIR/$SERVICE_UNIT"
 
 info "Writing systemd timer unit (home): $TIMER_DEST"
-if [ ! -r "$FILES_DIR/shutdown-after-sleep-installer.timer" ]; then
-    error "template timer unit not found at $FILES_DIR/shutdown-after-sleep-installer.timer"
+if [ ! -r "$FILES_DIR/steam-deck-smart-sleep-installer.timer" ]; then
+    error "template timer unit not found at $FILES_DIR/steam-deck-smart-sleep-installer.timer"
     exit 1
 fi
-cp "$FILES_DIR/shutdown-after-sleep-installer.timer" "$TIMER_DEST"
+cp "$FILES_DIR/steam-deck-smart-sleep-installer.timer" "$TIMER_DEST"
 
 info "Setting ownership and permissions on $TIMER_DEST"
 chown root:root "$TIMER_DEST"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# shutdown-after-sleep.sh
+# steam-deck-smart-sleep.sh
 #
 # This script is intended to run on a Steam Deck (or other
 # Linux system with an RTC) as a systemd "system-sleep" hook.
@@ -27,7 +27,7 @@
 set -euo pipefail
 
 # path for log file; root should be able to write here
-LOGFILE="/var/log/shutdown-after-sleep.log"
+LOGFILE="/var/log/steam-deck-smart-sleep.log"
 
 # how many seconds after suspend to schedule the RTC alarm
 # value embedded by the installer at install time

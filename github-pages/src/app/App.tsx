@@ -17,7 +17,7 @@ export default function App() {
 			{/* GitHub Link */}
 			<div className="absolute top-6 right-6">
 				<a
-					href="https://github.com/username/steamdeck-fix"
+					href="https://github.com/sandro-sikic/steam-deck-smart-sleep"
 					target="_blank"
 					rel="noopener noreferrer"
 					className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors backdrop-blur-sm"
@@ -33,7 +33,7 @@ export default function App() {
 				<div className="text-center max-w-4xl mx-auto mb-12">
 					<div className="mb-6 inline-block">
 						<div className="px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-full text-blue-300 text-sm font-medium">
-							Auto-Shutdown Sleep Fix
+							Auto-Shutdown after long Sleep
 						</div>
 					</div>
 
