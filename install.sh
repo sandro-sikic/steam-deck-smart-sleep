@@ -26,8 +26,7 @@ set -euo pipefail
 # Paths
 # ---------------------------------------------------------------------------
 
-INSTALL_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(dirname "$INSTALL_SCRIPT")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-/tmp}")" && pwd 2>/dev/null || echo "/tmp")"
 TARGET_DIR="/usr/lib/systemd/system-sleep"
 TARGET_SCRIPT="$TARGET_DIR/shutdown-after-sleep.sh"
 
@@ -41,6 +40,10 @@ else
 fi
 SLEEP_FIX_DIR="$USER_HOME/steam-deck-auto-off"
 HOOK_DEST="$SLEEP_FIX_DIR/$(basename "$TARGET_SCRIPT")"
+
+# The systemd service always re-runs the persistent copy stored in SLEEP_FIX_DIR,
+# regardless of how this script was originally invoked (local clone or curl pipe).
+INSTALL_SCRIPT="$SLEEP_FIX_DIR/install.sh"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,17 +63,53 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Source files – download from GitHub when not running from a local clone
+# ---------------------------------------------------------------------------
+# When invoked via `curl | bash` the sibling files are not present on disk.
+# Detect this and fetch them from GitHub into a temporary directory.
+
+GITHUB_RAW="https://raw.githubusercontent.com/sandro-sikic/steam-deck-auto-off/main"
+FILES_DIR="$SCRIPT_DIR"
+TMP_DIR=""
+
+_need_download=0
+for _f in shutdown-after-sleep.sh \
+          shutdown-after-sleep-installer.service \
+          shutdown-after-sleep-installer.timer \
+          install.sh; do
+    [ -r "$SCRIPT_DIR/$_f" ] || { _need_download=1; break; }
+done
+
+if [ "$_need_download" -eq 1 ]; then
+    TMP_DIR=$(mktemp -d)
+    FILES_DIR="$TMP_DIR"
+    info "Sibling files not found locally – downloading from GitHub..."
+    for _f in shutdown-after-sleep.sh \
+              shutdown-after-sleep-installer.service \
+              shutdown-after-sleep-installer.timer \
+              install.sh; do
+        info "  Downloading $_f"
+        curl -fsSL "$GITHUB_RAW/$_f" -o "$TMP_DIR/$_f"
+    done
+fi
+
+_cleanup() {
+    [ -n "$TMP_DIR" ] && rm -rf "$TMP_DIR"
+}
+trap _cleanup EXIT
+
+# ---------------------------------------------------------------------------
 # Write the hook script from the embedded heredoc
 # ---------------------------------------------------------------------------
 
 write_hook() {
     # Copy the templated hook script out of the installer directory into
     # the home storage area.
-    if [ ! -r "$SCRIPT_DIR/shutdown-after-sleep.sh" ]; then
-        error "template hook script not found at $SCRIPT_DIR/shutdown-after-sleep.sh"
+    if [ ! -r "$FILES_DIR/shutdown-after-sleep.sh" ]; then
+        error "template hook script not found at $FILES_DIR/shutdown-after-sleep.sh"
         exit 1
     fi
-    cp "$SCRIPT_DIR/shutdown-after-sleep.sh" "$HOOK_DEST"
+    cp "$FILES_DIR/shutdown-after-sleep.sh" "$HOOK_DEST"
 }
 
 # ---------------------------------------------------------------------------
@@ -82,6 +121,11 @@ steamos-readonly disable
 
 info "Creating home storage directory: $SLEEP_FIX_DIR"
 mkdir -p "$SLEEP_FIX_DIR"
+
+info "Persisting installer script -> $SLEEP_FIX_DIR/install.sh"
+cp "$FILES_DIR/install.sh" "$SLEEP_FIX_DIR/install.sh"
+chown root:root "$SLEEP_FIX_DIR/install.sh"
+chmod 755 "$SLEEP_FIX_DIR/install.sh"
 
 info "Creating target directory: $TARGET_DIR"  # required for the symlink
 mkdir -p "$TARGET_DIR"
@@ -126,11 +170,11 @@ TIMER_DEST="$SLEEP_FIX_DIR/$TIMER_UNIT"
 
 info "Writing systemd service unit (home): $SERVICE_DEST"
 mkdir -p "$SLEEP_FIX_DIR"
-if [ ! -r "$SCRIPT_DIR/shutdown-after-sleep-installer.service" ]; then
-    error "template service unit not found at $SCRIPT_DIR/shutdown-after-sleep-installer.service"
+if [ ! -r "$FILES_DIR/shutdown-after-sleep-installer.service" ]; then
+    error "template service unit not found at $FILES_DIR/shutdown-after-sleep-installer.service"
     exit 1
 fi
-cp "$SCRIPT_DIR/shutdown-after-sleep-installer.service" "$SERVICE_DEST"
+cp "$FILES_DIR/shutdown-after-sleep-installer.service" "$SERVICE_DEST"
 # substitute the dynamic exec path
 sed -i "s|__INSTALL_SCRIPT__|$INSTALL_SCRIPT|" "$SERVICE_DEST"
 
@@ -146,11 +190,11 @@ fi
 ln -s "$SERVICE_DEST" "$SYSTEMD_DIR/$SERVICE_UNIT"
 
 info "Writing systemd timer unit (home): $TIMER_DEST"
-if [ ! -r "$SCRIPT_DIR/shutdown-after-sleep-installer.timer" ]; then
-    error "template timer unit not found at $SCRIPT_DIR/shutdown-after-sleep-installer.timer"
+if [ ! -r "$FILES_DIR/shutdown-after-sleep-installer.timer" ]; then
+    error "template timer unit not found at $FILES_DIR/shutdown-after-sleep-installer.timer"
     exit 1
 fi
-cp "$SCRIPT_DIR/shutdown-after-sleep-installer.timer" "$TIMER_DEST"
+cp "$FILES_DIR/shutdown-after-sleep-installer.timer" "$TIMER_DEST"
 
 info "Setting ownership and permissions on $TIMER_DEST"
 chown root:root "$TIMER_DEST"
