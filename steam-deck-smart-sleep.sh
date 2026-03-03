@@ -71,6 +71,26 @@ clear_alarm() {
     log_msg "cleared RTC alarm"
 }
 
+# Returns 0 (true) if the device is currently connected to AC power / charging.
+is_charging() {
+    # Check for AC adapter online status (covers most common sysfs layouts)
+    local ac
+    for ac in /sys/class/power_supply/AC*/online \
+              /sys/class/power_supply/ADP*/online \
+              /sys/class/power_supply/ACAD*/online; do
+        [ -f "$ac" ] || continue
+        [ "$(cat "$ac")" = "1" ] && return 0
+    done
+    # Fallback: check battery charging status
+    local bat status
+    for bat in /sys/class/power_supply/BAT*/status; do
+        [ -f "$bat" ] || continue
+        status=$(cat "$bat")
+        [[ "$status" == "Charging" || "$status" == "Full" ]] && return 0
+    done
+    return 1
+}
+
 handle_pre() {
     log_msg "handling pre-sleep"
     schedule_alarm
@@ -87,10 +107,21 @@ handle_post() {
         log_msg "wake time was $scheduled, now is $now"
 
         if [ "$now" -ge "$scheduled" ]; then
-            # timer elapsed while we were asleep; initiate shutdown
-            log_msg "timer elapsed, initiating shutdown sequence"
-            /usr/bin/systemctl cancel
-            /usr/bin/systemctl poweroff 2>&1 | tee -a "$LOGFILE"
+            # timer elapsed while we were asleep
+            log_msg "timer elapsed, checking charging status"
+            if is_charging; then
+                # Still on AC power – reschedule and go back to sleep
+                log_msg "device is charging; rescheduling alarm and returning to sleep"
+                schedule_alarm
+                # Suspend after this hook exits (brief delay lets systemd finish cleanly)
+                /usr/bin/systemctl cancel
+                /usr/bin/systemctl suspend
+            else
+                # Not charging – initiate a clean shutdown
+                log_msg "device is not charging; initiating shutdown sequence"
+                /usr/bin/systemctl cancel
+                /usr/bin/systemctl poweroff 2>&1 | tee -a "$LOGFILE"
+            fi
         else
             # woke early; cancel the alarm so it doesn't fire later
             log_msg "woke early, cancelling alarm"
