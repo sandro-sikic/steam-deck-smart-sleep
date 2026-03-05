@@ -99,7 +99,7 @@ _cleanup() {
 trap _cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# Write the hook script from the embedded heredoc
+# Write the hook script by copying from the source directory
 # ---------------------------------------------------------------------------
 
 write_hook() {

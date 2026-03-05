@@ -5,8 +5,9 @@
 # Linux system with an RTC) as a systemd "system-sleep" hook.
 #
 # When the machine is about to suspend the system (sleep/hibernate),
-# systemd will invoke this script with the first argument "pre".
-# At that point we calculate a wakeup time 10800 seconds in the future
+# systemd will invoke this script with two arguments: $1 is "pre" and
+# $2 is the sleep type (e.g. "suspend", "hibernate", "hybrid-sleep").
+# At that point we calculate a wakeup time WAKE_DELAY seconds in the future
 # and programme the RTC accordingly.  We persist the target time in
 # a temporary file so that on resume we can tell whether we actually
 # woke because the timer expired or because the user intervened.
@@ -15,8 +16,9 @@
 # argument "post".  In that case we compare the current time against
 # the stored wake time:
 #   * if the clock has already passed the scheduled value we assume
-#     the machine woke up via the RTC alarm and immediately request a
-#     clean shutdown via systemctl.
+#     the machine woke up via the RTC alarm; if still charging we
+#     reschedule the alarm and go back to sleep, otherwise we request
+#     a clean shutdown via systemctl.
 #   * if the system came back early we simply clear the alarm so it
 #     won't fire later and remove the marker file.
 #
@@ -30,7 +32,7 @@ set -euo pipefail
 LOGFILE="/var/log/steam-deck-smart-sleep.log"
 
 # how many seconds after suspend to schedule the RTC alarm
-# value embedded by the installer at install time
+# edit this value directly to change the wake delay
 WAKE_DELAY=10800
 
 # helper for appending timestamped messages to log
@@ -113,7 +115,7 @@ handle_post() {
                 # Still on AC power – reschedule and go back to sleep
                 log_msg "device is charging; rescheduling alarm and returning to sleep"
                 schedule_alarm
-                # Suspend after this hook exits (brief delay lets systemd finish cleanly)
+                # Cancel any pending scheduled stop before re-suspending
                 /usr/bin/systemctl cancel
                 /usr/bin/systemctl suspend
             else
