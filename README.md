@@ -12,6 +12,8 @@ The script is a systemd `system-sleep` hook. Every time the device enters sleep,
    - **Not charging** → initiates a clean shutdown (`systemctl poweroff`) to preserve battery.
 3. **Device woken manually before the timer** — the RTC alarm is cancelled and nothing else happens.
 
+The hook is built to fail safe: it never blocks a suspend, so if the alarm cannot be set the device simply sleeps normally. If it is charging but cannot re-arm the alarm, it stays awake rather than sleeping with no way to wake. It also validates `WAKE_DELAY` and the saved marker, issues `systemctl` calls with `--no-block` (the hook runs while `sleep.target` is still being torn down), and rotates its log at 1 MiB.
+
 All activity is logged to `/var/log/steam-deck-smart-sleep.log`.
 
 > **Save your game first.** A shutdown triggered by this script is equivalent to running out of battery — any unsaved in-memory data is lost.
@@ -45,7 +47,7 @@ The installer also works from a local clone — if the sibling files are present
    /etc/systemd/system/steam-deck-smart-sleep-installer.*   ->  ~/steam-deck-smart-sleep/...
    ```
 4. Re-enables the read-only filesystem.
-5. Registers and starts a systemd boot timer (`steam-deck-smart-sleep-installer.timer`) that re-runs the installer on every boot, so SteamOS updates cannot permanently remove the hook.
+5. Registers and starts a systemd boot timer (`steam-deck-smart-sleep-installer.timer`) that re-runs the installer on every boot, so SteamOS updates cannot permanently remove the hook. When everything is already in place the boot run changes nothing and never touches the read-only setting; if a run fails part-way, the read-only filesystem is restored on exit.
 
 ## Configuration
 
@@ -64,6 +66,16 @@ nano ~/steam-deck-smart-sleep/steam-deck-smart-sleep.sh
 | `steam-deck-smart-sleep.sh`                | The systemd `system-sleep` hook. Programs the RTC alarm on suspend (`pre`) and handles wake logic on resume (`post`).                                                  |
 | `steam-deck-smart-sleep-installer.service` | Systemd service unit that runs `install.sh` on boot.                                                                                                                   |
 | `steam-deck-smart-sleep-installer.timer`   | Systemd timer unit that triggers the service on every boot.                                                                                                            |
+| `tests/`                                   | [bats](https://github.com/bats-core/bats-core) unit tests plus `coverage.sh`, which enforces 100% line coverage with [kcov](https://github.com/SimonKagstrom/kcov).     |
+
+## Development
+
+The tests run the scripts against stubs (fake `rtcwake`, `systemctl`, `steamos-readonly`, sysfs and install directories in a temp dir), so they are safe to run on any Linux machine and never touch the real RTC, systemd or `/etc`. They cannot prove behaviour on real Steam Deck hardware.
+
+```bash
+bats tests/            # run the tests
+tests/coverage.sh      # run them under kcov and require 100% line coverage
+```
 
 ## Security Notice
 

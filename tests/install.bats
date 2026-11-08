@@ -1,0 +1,242 @@
+#!/usr/bin/env bats
+# Tests for install.sh.  The installer runs against a scratch root: HOME, the
+# system-sleep and systemd directories live under $BATS_TEST_TMPDIR, and
+# steamos-readonly / systemctl / chown / getent are stubs earlier on PATH.
+# Nothing here touches the real system.
+
+REPO="$BATS_TEST_DIRNAME/.."
+
+setup() {
+    T="$BATS_TEST_TMPDIR"
+    export CALLS="$T/calls"
+    : > "$CALLS"
+
+    # a pretend local clone
+    SRC="$T/src"
+    mkdir -p "$SRC"
+    cp "$REPO"/install.sh "$REPO"/steam-deck-smart-sleep.sh \
+       "$REPO"/steam-deck-smart-sleep-installer.service \
+       "$REPO"/steam-deck-smart-sleep-installer.timer "$SRC/"
+
+    # stub commands
+    mkdir -p "$T/bin"
+    for c in steamos-readonly systemctl chown; do
+        cat > "$T/bin/$c" <<STUB
+#!/bin/bash
+echo "$c \$*" >> "\$CALLS"
+if [ "\${FAIL_${c//-/_}:-}" = "\$1" ]; then exit 1; fi
+exit 0
+STUB
+        chmod +x "$T/bin/$c"
+    done
+    cat > "$T/bin/getent" <<'STUB'
+#!/bin/bash
+printf '%s\n' "${GETENT_OUT:-}"
+STUB
+    chmod +x "$T/bin/getent"
+
+    export PATH="$T/bin:$PATH"
+    export HOME="$T/home"
+    export SDSS_EUID=0
+    export SDSS_TARGET_DIR="$T/sys/system-sleep"
+    export SDSS_SYSTEMD_DIR="$T/sys/systemd"
+    export SDSS_GITHUB_RAW="file://$SRC"
+    export TMPDIR="$T/tmp"
+    export SDSS_SCRIPT_DIR="$SRC"
+    unset SUDO_USER
+    mkdir -p "$HOME" "$TMPDIR"
+}
+
+# Run the repo's installer against the fake clone in $SRC.
+inst() { bash "$REPO/install.sh"; }
+
+skip_if_coverage() {
+    [ -z "${SDSS_COVERAGE:-}" ] || skip "kcov cannot follow a piped/real entry point"
+}
+
+@test "refuses to run as non-root" {
+    SDSS_EUID=1000 run inst
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"must be run as root"* ]]
+    [ ! -e "$HOME/steam-deck-smart-sleep" ]
+}
+
+@test "fresh install from a local clone" {
+    run inst
+    [ "$status" -eq 0 ]
+    d="$HOME/steam-deck-smart-sleep"
+    [ -x "$d/steam-deck-smart-sleep.sh" ]
+    [ "$(stat -c %a "$d/install.sh")" = 755 ]
+    [ "$(stat -c %a "$d/steam-deck-smart-sleep-installer.service")" = 644 ]
+    [ "$(readlink "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh")" = "$d/steam-deck-smart-sleep.sh" ]
+    [ "$(readlink "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.service")" = "$d/steam-deck-smart-sleep-installer.service" ]
+    [ "$(readlink "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.timer")" = "$d/steam-deck-smart-sleep-installer.timer" ]
+    grep -q "^ExecStart=$d/install.sh$" "$d/steam-deck-smart-sleep-installer.service"
+    ! grep -q __INSTALL_SCRIPT__ "$d/steam-deck-smart-sleep-installer.service"
+    # read-only is lifted only around the system changes, then restored
+    mapfile -t lines < "$CALLS"
+    [[ "${lines[*]}" == *"steamos-readonly disable"*"steamos-readonly enable"*"systemctl daemon-reload"*"systemctl enable --now steam-deck-smart-sleep-installer.timer"* ]]
+}
+
+@test "the boot re-run from the installed copy works and changes nothing" {
+    inst
+    : > "$CALLS"
+    SDSS_SCRIPT_DIR="$HOME/steam-deck-smart-sleep" run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Already installed"* ]]
+    ! grep -q steamos-readonly "$CALLS"
+    ! grep -q systemctl "$CALLS"
+}
+
+@test "the boot re-run restores a hook wiped by an OS update" {
+    inst
+    rm "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh"
+    : > "$CALLS"
+    SDSS_SCRIPT_DIR="$HOME/steam-deck-smart-sleep" run inst
+    [ "$status" -eq 0 ]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+    grep -q "steamos-readonly disable" "$CALLS"
+    grep -q "steamos-readonly enable" "$CALLS"
+}
+
+@test "a real file in the hook location is replaced by the symlink" {
+    mkdir -p "$SDSS_TARGET_DIR"
+    echo old > "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh"
+    run inst
+    [ "$status" -eq 0 ]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+}
+
+@test "without a local clone the files are downloaded and temp files removed" {
+    mv "$SRC" "$T/remote"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    SDSS_SCRIPT_DIR="" run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"downloading from GitHub"* ]]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+    [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "end to end: cat install.sh | bash" {
+    skip_if_coverage
+    mv "$SRC" "$T/remote"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    unset SDSS_SCRIPT_DIR
+    run bash -c 'cat "$1" | bash' _ "$REPO/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"downloading from GitHub"* ]]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+}
+
+@test "end to end: a non-regular script path (process substitution)" {
+    skip_if_coverage
+    unset SDSS_SCRIPT_DIR
+    run bash <(cat "$REPO/install.sh")
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"downloading from GitHub"* ]]
+}
+
+@test "end to end: the script locates its own clone" {
+    unset SDSS_SCRIPT_DIR
+    run inst
+    [ "$status" -eq 0 ]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+    ! [[ "$output" == *"downloading"* ]]
+}
+
+@test "end to end: the installed copy re-runs cleanly on boot" {
+    skip_if_coverage
+    inst
+    unset SDSS_SCRIPT_DIR
+    run bash "$HOME/steam-deck-smart-sleep/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Already installed"* ]]
+}
+
+@test "downloads when a sibling file is missing" {
+    cp -r "$SRC" "$T/remote"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    rm "$SRC/steam-deck-smart-sleep-installer.timer"
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"downloading from GitHub"* ]]
+}
+
+@test "a failed download aborts before touching anything" {
+    rm "$SRC/steam-deck-smart-sleep-installer.timer"
+    export SDSS_GITHUB_RAW="file://$T/nowhere"
+    run inst
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"failed to download"* ]]
+    ! grep -q steamos-readonly "$CALLS"
+    [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "uses the home of the sudo user" {
+    export SUDO_USER=deck
+    export GETENT_OUT="deck:x:1000:1000::$T/deckhome:/bin/bash"
+    mkdir -p "$T/deckhome"
+    run inst
+    [ "$status" -eq 0 ]
+    [ -d "$T/deckhome/steam-deck-smart-sleep" ]
+}
+
+@test "fails when the sudo user has no home" {
+    export SUDO_USER=ghost
+    export GETENT_OUT=""
+    run inst
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"could not determine the home directory"* ]]
+}
+
+@test "SUDO_USER=root falls back to HOME" {
+    export SUDO_USER=root
+    run inst
+    [ "$status" -eq 0 ]
+    [ -d "$HOME/steam-deck-smart-sleep" ]
+}
+
+@test "works without steamos-readonly" {
+    rm "$T/bin/steamos-readonly"
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"steamos-readonly not found"* ]]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+}
+
+@test "special characters in the home path survive the unit substitution" {
+    export HOME="$T/we&ird|dir\\x"
+    mkdir -p "$HOME"
+    run inst
+    [ "$status" -eq 0 ]
+    grep -qxF "ExecStart=$HOME/steam-deck-smart-sleep/install.sh" \
+        "$HOME/steam-deck-smart-sleep/steam-deck-smart-sleep-installer.service"
+}
+
+@test "a failure mid-install still re-enables read-only" {
+    touch "$T/blocker"
+    export SDSS_SYSTEMD_DIR="$T/blocker/systemd"   # mkdir will fail
+    run inst
+    [ "$status" -ne 0 ]
+    grep -q "steamos-readonly disable" "$CALLS"
+    grep -q "steamos-readonly enable" "$CALLS"
+}
+
+@test "reports when read-only cannot be restored after a failure" {
+    touch "$T/blocker"
+    export SDSS_SYSTEMD_DIR="$T/blocker/systemd"
+    FAIL_steamos_readonly=enable run inst
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"could not re-enable the read-only filesystem"* ]]
+}
+
+@test "fails loudly when read-only cannot be restored on the normal path" {
+    FAIL_steamos_readonly=enable run inst
+    [ "$status" -ne 0 ]
+}
+
+@test "sourcing the installer does not run it" {
+    run bash -c 'source "$1"' _ "$REPO/install.sh"
+    [ "$status" -eq 0 ]
+    [ ! -e "$HOME/steam-deck-smart-sleep" ]
+}
