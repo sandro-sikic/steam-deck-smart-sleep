@@ -1,8 +1,11 @@
 [Unit]
 Description=Reinstall steam-deck-smart-sleep hook after SteamOS update
-After=local-fs.target
+Wants=network-online.target
+After=local-fs.target network-online.target
 
 [Service]
 Type=oneshot
+# systemd does not set $HOME for services without User=, so say where we live.
+Environment="SDSS_INSTALL_DIR=__INSTALL_DIR__"
 ExecStart=__INSTALL_SCRIPT__
 RemainAfterExit=yes

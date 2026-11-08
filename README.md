@@ -35,19 +35,19 @@ Run the installer once as root:
 curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh | sudo bash
 ```
 
-The installer also works from a local clone — if the sibling files are present alongside `install.sh`, they are used instead of downloading from GitHub.
+The installer always tries to fetch the latest files from GitHub first. If that fails (offline, GitHub down) it falls back to the files next to `install.sh`, e.g. from a local clone. To skip the download and install your local edits, run `sudo SDSS_USE_LOCAL=1 bash install.sh`.
 
 ### What the Installer Does
 
 1. Disables the SteamOS read-only filesystem temporarily.
-2. Copies all files into `~/steam-deck-smart-sleep` (uses the invoking user's home when run with `sudo`, not `/root`).
+2. Fetches the latest files (or uses the local fallback) and copies them into `~/steam-deck-smart-sleep` (uses the invoking user's home when run with `sudo`, not `/root`).
 3. Creates symlinks from system paths to the home directory copies:
    ```
    /usr/lib/systemd/system-sleep/steam-deck-smart-sleep.sh  ->  ~/steam-deck-smart-sleep/steam-deck-smart-sleep.sh
    /etc/systemd/system/steam-deck-smart-sleep-installer.*   ->  ~/steam-deck-smart-sleep/...
    ```
 4. Re-enables the read-only filesystem.
-5. Registers and starts a systemd boot timer (`steam-deck-smart-sleep-installer.timer`) that re-runs the installer on every boot, so SteamOS updates cannot permanently remove the hook. When everything is already in place the boot run changes nothing and never touches the read-only setting; if a run fails part-way, the read-only filesystem is restored on exit.
+5. Registers and starts a systemd boot timer (`steam-deck-smart-sleep-installer.timer`) that re-runs the installer on every boot, so SteamOS updates cannot permanently remove the hook. The boot service runs after `network-online.target`, so it normally pulls the newest version from `main` on every boot, and falls back to the files already in `~/steam-deck-smart-sleep` when offline. systemd does not set `$HOME` for the service, so the unit passes the install directory explicitly (`SDSS_INSTALL_DIR`). When everything is already in place the boot run changes no system files and never touches the read-only setting; if a run fails part-way, the read-only filesystem is restored on exit.
 
 ## Configuration
 
@@ -79,7 +79,7 @@ tests/coverage.sh      # run them under kcov and require 100% line coverage
 
 ## Security Notice
 
-This script modifies system files and requires root access. Please [review the source code](https://github.com/sandro-sikic/steam-deck-smart-sleep) before installation. The developer is not responsible for any damage caused by this program. Use at your own risk.
+This script modifies system files and requires root access. Because the boot service fetches and runs the installer from the `main` branch as root, anything merged there is executed on your device at the next boot; use `SDSS_USE_LOCAL=1` and a pinned copy if you do not want that. Please [review the source code](https://github.com/sandro-sikic/steam-deck-smart-sleep) before installation. The developer is not responsible for any damage caused by this program. Use at your own risk.
 
 ## Contributing & License
 

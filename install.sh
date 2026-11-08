@@ -14,6 +14,10 @@
 # after every SteamOS update (which resets the read-only root filesystem).
 # When everything is already in place the boot run changes nothing and never
 # touches the read-only setting.
+#
+# Source files: the installer first tries to fetch the latest versions from
+# GitHub; only if that fails does it fall back to the copies next to it.  Set
+# SDSS_USE_LOCAL=1 to skip the download (e.g. to test local edits).
 
 set -euo pipefail
 
@@ -61,14 +65,22 @@ cleanup() {
     return "$rc"
 }
 
-# Copy SRC to DST unless they are the same file (the boot timer re-runs the
-# installer from the directory it installs into).
+# Copy SRC to DST unless they are the same file (a local re-run from the
+# directory it installs into).  The copy goes through a temp file and a rename
+# so that overwriting the running installer never corrupts it: bash keeps
+# reading the old inode.
 copy_file() {
     local src="$1" dst="$2"
     if [ "$src" -ef "$dst" ]; then
         return 0
     fi
-    cp "$src" "$dst"
+    cp "$src" "$dst.new"
+    mv -f "$dst.new" "$dst"
+}
+
+# Escape a string for use as the replacement in a sed s||| expression.
+sed_escape() {
+    printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
 }
 
 # True when LINK is a symlink pointing at DEST.
@@ -118,14 +130,21 @@ resolve_paths() {
     # Directory under the user's home where the real files will live. When the
     # installer is invoked with sudo we prefer the invoking user's home rather
     # than /root so that the files are easy to inspect and modify later.
-    local user_home
-    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-        user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-        [ -n "$user_home" ] || die "could not determine the home directory of $SUDO_USER"
+    # The boot service sets SDSS_INSTALL_DIR explicitly: systemd does not set
+    # $HOME for services without User=.
+    if [ -n "${SDSS_INSTALL_DIR:-}" ]; then
+        SLEEP_FIX_DIR="$SDSS_INSTALL_DIR"
     else
-        user_home="$HOME"
+        local user_home
+        if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+            user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+            [ -n "$user_home" ] || die "could not determine the home directory of $SUDO_USER"
+        else
+            user_home="${HOME:-}"
+            [ -n "$user_home" ] || die "HOME is not set; set SDSS_INSTALL_DIR to the install directory"
+        fi
+        SLEEP_FIX_DIR="$user_home/steam-deck-smart-sleep"
     fi
-    SLEEP_FIX_DIR="$user_home/steam-deck-smart-sleep"
     HOOK_DEST="$SLEEP_FIX_DIR/$HOOK_NAME"
     SERVICE_DEST="$SLEEP_FIX_DIR/$SERVICE_UNIT"
     TIMER_DEST="$SLEEP_FIX_DIR/$TIMER_UNIT"
@@ -134,26 +153,44 @@ resolve_paths() {
     INSTALL_SCRIPT="$SLEEP_FIX_DIR/install.sh"
 }
 
-# Decide where the source files come from: next to this script when they are
-# all there, otherwise downloaded from GitHub into a temporary directory.
-locate_sources() {
-    FILES_DIR="$SCRIPT_DIR"
-    local f need_download=0
+# True when SCRIPT_DIR holds a readable copy of every source file.
+local_sources_complete() {
+    local f
+    [ -n "$SCRIPT_DIR" ] || return 1
     for f in "${SOURCE_FILES[@]}"; do
-        if [ -z "$SCRIPT_DIR" ] || [ ! -r "$SCRIPT_DIR/$f" ]; then
-            need_download=1
-            break
-        fi
+        [ -r "$SCRIPT_DIR/$f" ] || return 1
     done
-    [ "$need_download" -eq 1 ] || return 0
+}
 
+# Fetch every source file into TMP_DIR; non-zero if any is missing or empty.
+download_sources() {
+    local f
     TMP_DIR=$(mktemp -d)
-    FILES_DIR="$TMP_DIR"
-    info "Sibling files not found locally – downloading from GitHub..."
     for f in "${SOURCE_FILES[@]}"; do
         info "  Downloading $f"
-        curl -fsSL "$GITHUB_RAW/$f" -o "$TMP_DIR/$f" || die "failed to download $f"
+        curl -fsSL --connect-timeout 10 --max-time 60 "$GITHUB_RAW/$f" -o "$TMP_DIR/$f" || return 1
+        [ -s "$TMP_DIR/$f" ] || return 1
     done
+}
+
+# Prefer the latest files from GitHub; fall back to the local copies when the
+# download fails (offline at boot, GitHub down) or SDSS_USE_LOCAL=1.
+locate_sources() {
+    if [ "${SDSS_USE_LOCAL:-0}" != "1" ]; then
+        info "Fetching the latest version from GitHub..."
+        if download_sources; then
+            FILES_DIR="$TMP_DIR"
+            return 0
+        fi
+        error "download failed; falling back to local files"
+        rm -rf "$TMP_DIR"
+        TMP_DIR=""
+    fi
+
+    local_sources_complete \
+        || die "no usable source files: download failed or disabled, and no complete local copy in '${SCRIPT_DIR:-<none>}'"
+    FILES_DIR="$SCRIPT_DIR"
+    info "Using local files from $FILES_DIR"
 }
 
 # Put the real files into the home directory.  This needs no write access to
@@ -174,10 +211,9 @@ stage_files() {
 
     info "Writing systemd service unit: $SERVICE_DEST"
     copy_file "$FILES_DIR/$SERVICE_UNIT" "$SERVICE_DEST"
-    # substitute the dynamic exec path (escape characters special to sed)
-    local escaped
-    escaped=$(printf '%s' "$INSTALL_SCRIPT" | sed 's/[\\&|]/\\&/g')
-    sed -i "s|__INSTALL_SCRIPT__|$escaped|" "$SERVICE_DEST"
+    # substitute the dynamic paths (escaped for sed)
+    sed -i -e "s|__INSTALL_SCRIPT__|$(sed_escape "$INSTALL_SCRIPT")|" \
+           -e "s|__INSTALL_DIR__|$(sed_escape "$SLEEP_FIX_DIR")|" "$SERVICE_DEST"
     chown root:root "$SERVICE_DEST"
     chmod 644 "$SERVICE_DEST"
 

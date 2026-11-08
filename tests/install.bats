@@ -43,6 +43,7 @@ STUB
     export SDSS_GITHUB_RAW="file://$SRC"
     export TMPDIR="$T/tmp"
     export SDSS_SCRIPT_DIR="$SRC"
+    export SDSS_USE_LOCAL=1   # tests opt in to downloading
     unset SUDO_USER
     mkdir -p "$HOME" "$TMPDIR"
 }
@@ -72,6 +73,9 @@ skip_if_coverage() {
     [ "$(readlink "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.service")" = "$d/steam-deck-smart-sleep-installer.service" ]
     [ "$(readlink "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.timer")" = "$d/steam-deck-smart-sleep-installer.timer" ]
     grep -q "^ExecStart=$d/install.sh$" "$d/steam-deck-smart-sleep-installer.service"
+    grep -qxF "Environment=\"SDSS_INSTALL_DIR=$d\"" "$d/steam-deck-smart-sleep-installer.service"
+    ! grep -q __INSTALL_DIR__ "$d/steam-deck-smart-sleep-installer.service"
+    [ ! -e "$d/install.sh.new" ]
     ! grep -q __INSTALL_SCRIPT__ "$d/steam-deck-smart-sleep-installer.service"
     # read-only is lifted only around the system changes, then restored
     mapfile -t lines < "$CALLS"
@@ -110,9 +114,10 @@ skip_if_coverage() {
 @test "without a local clone the files are downloaded and temp files removed" {
     mv "$SRC" "$T/remote"
     export SDSS_GITHUB_RAW="file://$T/remote"
+    unset SDSS_USE_LOCAL
     SDSS_SCRIPT_DIR="" run inst
     [ "$status" -eq 0 ]
-    [[ "$output" == *"downloading from GitHub"* ]]
+    [[ "$output" == *"Downloading install.sh"* ]]
     [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
     [ -z "$(ls -A "$TMPDIR")" ]
 }
@@ -121,19 +126,19 @@ skip_if_coverage() {
     skip_if_coverage
     mv "$SRC" "$T/remote"
     export SDSS_GITHUB_RAW="file://$T/remote"
-    unset SDSS_SCRIPT_DIR
+    unset SDSS_SCRIPT_DIR SDSS_USE_LOCAL
     run bash -c 'cat "$1" | bash' _ "$REPO/install.sh"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"downloading from GitHub"* ]]
+    [[ "$output" == *"Downloading install.sh"* ]]
     [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
 }
 
 @test "end to end: a non-regular script path (process substitution)" {
     skip_if_coverage
-    unset SDSS_SCRIPT_DIR
+    unset SDSS_SCRIPT_DIR SDSS_USE_LOCAL
     run bash <(cat "$REPO/install.sh")
     [ "$status" -eq 0 ]
-    [[ "$output" == *"downloading from GitHub"* ]]
+    [[ "$output" == *"Downloading install.sh"* ]]
 }
 
 @test "end to end: the script locates its own clone" {
@@ -141,7 +146,7 @@ skip_if_coverage() {
     run inst
     [ "$status" -eq 0 ]
     [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
-    ! [[ "$output" == *"downloading"* ]]
+    [[ "$output" == *"Using local files"* ]]
 }
 
 @test "end to end: the installed copy re-runs cleanly on boot" {
@@ -153,23 +158,66 @@ skip_if_coverage() {
     [[ "$output" == *"Already installed"* ]]
 }
 
-@test "downloads when a sibling file is missing" {
+@test "downloads by default, even when a complete local copy exists" {
     cp -r "$SRC" "$T/remote"
+    echo "# from github" >> "$T/remote/steam-deck-smart-sleep.sh"
     export SDSS_GITHUB_RAW="file://$T/remote"
-    rm "$SRC/steam-deck-smart-sleep-installer.timer"
+    unset SDSS_USE_LOCAL
     run inst
     [ "$status" -eq 0 ]
-    [[ "$output" == *"downloading from GitHub"* ]]
+    [[ "$output" == *"Fetching the latest version"* ]]
+    grep -q "# from github" "$HOME/steam-deck-smart-sleep/steam-deck-smart-sleep.sh"
+    [ -z "$(ls -A "$TMPDIR")" ]
 }
 
-@test "a failed download aborts before touching anything" {
-    rm "$SRC/steam-deck-smart-sleep-installer.timer"
+@test "falls back to the local copy when the download fails" {
+    echo "# local" >> "$SRC/steam-deck-smart-sleep.sh"
+    export SDSS_GITHUB_RAW="file://$T/nowhere"
+    unset SDSS_USE_LOCAL
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"download failed; falling back to local files"* ]]
+    [[ "$output" == *"Using local files"* ]]
+    grep -q "# local" "$HOME/steam-deck-smart-sleep/steam-deck-smart-sleep.sh"
+    [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "an empty download counts as a failure" {
+    cp -r "$SRC" "$T/remote"
+    : > "$T/remote/steam-deck-smart-sleep-installer.timer"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    unset SDSS_USE_LOCAL
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"falling back to local files"* ]]
+    [ -s "$HOME/steam-deck-smart-sleep/steam-deck-smart-sleep-installer.timer" ]
+}
+
+@test "SDSS_USE_LOCAL=1 never downloads" {
     export SDSS_GITHUB_RAW="file://$T/nowhere"
     run inst
+    [ "$status" -eq 0 ]
+    ! [[ "$output" == *"Fetching"* ]]
+    ! [[ "$output" == *"download failed"* ]]
+}
+
+@test "aborts before touching anything when there is neither a download nor a complete local copy" {
+    rm "$SRC/steam-deck-smart-sleep-installer.timer"
+    export SDSS_GITHUB_RAW="file://$T/nowhere"
+    unset SDSS_USE_LOCAL
+    run inst
     [ "$status" -eq 1 ]
-    [[ "$output" == *"failed to download"* ]]
+    [[ "$output" == *"no usable source files"* ]]
     ! grep -q steamos-readonly "$CALLS"
     [ -z "$(ls -A "$TMPDIR")" ]
+}
+
+@test "aborts when run via curl | bash and GitHub is unreachable" {
+    export SDSS_GITHUB_RAW="file://$T/nowhere"
+    unset SDSS_USE_LOCAL
+    SDSS_SCRIPT_DIR="" run inst
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"<none>"* ]]
 }
 
 @test "uses the home of the sudo user" {
@@ -239,4 +287,53 @@ skip_if_coverage() {
     run bash -c 'source "$1"' _ "$REPO/install.sh"
     [ "$status" -eq 0 ]
     [ ! -e "$HOME/steam-deck-smart-sleep" ]
+}
+
+# --------------------------------------------- boot run (no $HOME under systemd)
+
+@test "fails clearly when neither HOME nor SDSS_INSTALL_DIR is available" {
+    run env -u HOME bash "$REPO/install.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"HOME is not set"* ]]
+}
+
+@test "SDSS_INSTALL_DIR is used when HOME is unset" {
+    SDSS_INSTALL_DIR="$T/elsewhere" run env -u HOME bash "$REPO/install.sh"
+    [ "$status" -eq 0 ]
+    [ -x "$T/elsewhere/steam-deck-smart-sleep.sh" ]
+}
+
+@test "end to end: the boot service environment reinstalls with no HOME and fetches the latest files" {
+    skip_if_coverage
+    inst >/dev/null
+    d="$HOME/steam-deck-smart-sleep"
+    # exactly what systemd would pass to ExecStart
+    unit_env=$(sed -n 's/^Environment="\(.*\)"$/\1/p' "$d/steam-deck-smart-sleep-installer.service")
+    exec_start=$(sed -n 's/^ExecStart=//p' "$d/steam-deck-smart-sleep-installer.service")
+    # an OS update wipes the hook; GitHub has a newer version
+    rm "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh"
+    cp -r "$SRC" "$T/remote"
+    echo "# newer" >> "$T/remote/steam-deck-smart-sleep.sh"
+    : > "$CALLS"
+    run env -i PATH="$PATH" CALLS="$CALLS" SDSS_EUID=0 SDSS_TARGET_DIR="$SDSS_TARGET_DIR" \
+        SDSS_SYSTEMD_DIR="$SDSS_SYSTEMD_DIR" SDSS_GITHUB_RAW="file://$T/remote" \
+        TMPDIR="$TMPDIR" "$unit_env" bash "$exec_start"
+    [ "$status" -eq 0 ]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+    grep -q "# newer" "$d/steam-deck-smart-sleep.sh"
+    grep -q "steamos-readonly enable" "$CALLS"
+}
+
+@test "end to end: the boot service falls back to the installed files when offline" {
+    skip_if_coverage
+    inst >/dev/null
+    d="$HOME/steam-deck-smart-sleep"
+    unit_env=$(sed -n 's/^Environment="\(.*\)"$/\1/p' "$d/steam-deck-smart-sleep-installer.service")
+    rm "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh"
+    run env -i PATH="$PATH" CALLS="$CALLS" SDSS_EUID=0 SDSS_TARGET_DIR="$SDSS_TARGET_DIR" \
+        SDSS_SYSTEMD_DIR="$SDSS_SYSTEMD_DIR" SDSS_GITHUB_RAW="file://$T/nowhere" \
+        TMPDIR="$TMPDIR" "$unit_env" bash "$d/install.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"falling back to local files"* ]]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
 }
