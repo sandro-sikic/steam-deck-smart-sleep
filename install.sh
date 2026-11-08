@@ -272,6 +272,25 @@ register_timer() {
     systemctl enable --now "$TIMER_UNIT"
 }
 
+# Tell the user how to uninstall.  Shown once, after a real install; the
+# offline command appears only if the local uninstaller actually exists.
+print_uninstall_help() {
+    local bar="============================================================"
+    printf '\n%s\n' "$bar"
+    printf ' steam-deck-smart-sleep is installed.\n\n'
+    if [ -x "$UNINSTALL_DEST" ]; then
+        printf ' To uninstall it later (works offline):\n\n     sudo %s\n\n' "$UNINSTALL_DEST"
+        printf ' Or fetch the uninstaller from GitHub:\n\n'
+    else
+        printf ' To uninstall it later, run:\n\n'
+    fi
+    printf '     curl -fsSL %s/uninstall.sh | sudo bash\n\n' "$GITHUB_RAW"
+    printf ' This removes the sleep hook, the boot timer and service, and the\n'
+    printf ' log file. Your files in %s are kept;\n' "$SLEEP_FIX_DIR"
+    printf ' delete that folder yourself if you want them gone too.\n'
+    printf '%s\n' "$bar"
+}
+
 main() {
     if [ "${SDSS_EUID:-$EUID}" -ne 0 ]; then
         error "This script must be run as root."
@@ -291,9 +310,9 @@ main() {
 
     link_system_files
     info "Installation complete: original hook at $HOOK_DEST"
-    [ ! -x "$UNINSTALL_DEST" ] || info "To uninstall later: sudo $UNINSTALL_DEST"
     register_timer
     info "Done. The hook will be automatically reinstalled on every boot."
+    print_uninstall_help
 }
 
 # Only run when executed (or piped into bash), so the tests can source the

@@ -69,7 +69,10 @@ skip_if_coverage() {
     [ -x "$d/steam-deck-smart-sleep.sh" ]
     [ "$(stat -c %a "$d/install.sh")" = 755 ]
     [ "$(stat -c %a "$d/uninstall.sh")" = 755 ]
-    [[ "$output" == *"To uninstall later: sudo $d/uninstall.sh"* ]]
+    [[ "$output" == *"To uninstall it later (works offline):"* ]]
+    [[ "$output" == *"sudo $d/uninstall.sh"* ]]
+    [[ "$output" == *"curl -fsSL file://$SRC/uninstall.sh | sudo bash"* ]]
+    [[ "$output" == *"Your files in $d are kept;"* ]]
     [ "$(stat -c %a "$d/steam-deck-smart-sleep-installer.service")" = 644 ]
     [ "$(readlink "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh")" = "$d/steam-deck-smart-sleep.sh" ]
     [ "$(readlink "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.service")" = "$d/steam-deck-smart-sleep-installer.service" ]
@@ -362,7 +365,10 @@ skip_if_coverage() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"uninstall.sh unavailable; skipping"* ]]
     [ ! -e "$HOME/steam-deck-smart-sleep/uninstall.sh" ]
-    ! [[ "$output" == *"To uninstall later"* ]]
+    # no offline command, but the GitHub one is still shown
+    ! [[ "$output" == *"works offline"* ]]
+    [[ "$output" == *"To uninstall it later, run:"* ]]
+    [[ "$output" == *"| sudo bash"* ]]
     [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
 }
 
@@ -398,4 +404,22 @@ skip_if_coverage() {
     [ ! -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
     [ ! -L "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.timer" ]
     [ -f "$HOME/steam-deck-smart-sleep/install.sh" ]
+}
+
+@test "the uninstall help is shown after an install but not on an already-installed run" {
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"steam-deck-smart-sleep is installed."* ]]
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Already installed"* ]]
+    ! [[ "$output" == *"steam-deck-smart-sleep is installed."* ]]
+}
+
+@test "the uninstall help shows the sudo user's home, not root's" {
+    export SUDO_USER=deck
+    export GETENT_OUT="deck:x:1000:1000::$T/deckhome:/bin/bash"
+    mkdir -p "$T/deckhome"
+    run inst
+    [[ "$output" == *"sudo $T/deckhome/steam-deck-smart-sleep/uninstall.sh"* ]]
 }

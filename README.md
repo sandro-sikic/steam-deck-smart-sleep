@@ -51,7 +51,7 @@ The installer always tries to fetch the latest files from GitHub first. If that 
 
 ## Uninstalling
 
-The installer also keeps a copy of the uninstaller in `~/steam-deck-smart-sleep`, so you can uninstall offline (it is optional: if it can't be fetched, the install still succeeds). Run it as root, from that copy, from a clone, or straight from GitHub:
+The installer prints these uninstall instructions when it finishes. It also keeps a copy of the uninstaller in `~/steam-deck-smart-sleep`, so you can uninstall offline (it is optional: if it can't be fetched, the install still succeeds). Run it as root, from that copy, from a clone, or straight from GitHub:
 
 ```bash
 sudo ~/steam-deck-smart-sleep/uninstall.sh
