@@ -12,6 +12,7 @@ setup() {
     export SDSS_SYSTEMCTL="$T/systemctl"
     export SDSS_RTC_WAKEALARM="$T/wakealarm"
     export SDSS_POWER_SUPPLY_DIR="$T/ps"
+    export SDSS_CONFIG="$T/smart-sleep.conf"   # absent unless a test writes it
     export CALLS="$T/calls"
     export NOW=1000
     mkdir -p "$T/ps"
@@ -64,22 +65,106 @@ set_bat() { mkdir -p "$T/ps/BAT0"; echo "$1" > "$T/ps/BAT0/status"; }
     [ "$status" -eq 0 ]
 }
 
-# ---------------------------------------------------------- effective_delay
+# ------------------------------------------------------------- config / delay
 
-@test "effective_delay returns WAKE_DELAY when valid" {
-    run --separate-stderr bash -c 'source "$1"; WAKE_DELAY=60; effective_delay' _ "$SCRIPT"
+delay() { run --separate-stderr call effective_delay; }
+
+@test "effective_delay is the default (3h) without a config file, silently" {
+    delay
+    [ "$output" = "10800" ]
+    [ ! -e "$SDSS_LOGFILE" ]
+}
+
+@test "effective_delay converts the configured minutes to seconds" {
+    echo "WAKE_DELAY_MINUTES=90" > "$SDSS_CONFIG"
+    delay
+    [ "$output" = "5400" ]
+    [ ! -e "$SDSS_LOGFILE" ]
+}
+
+@test "the config tolerates comments, blank lines, trailing spaces and no final newline" {
+    printf '# a comment\n\nWAKE_DELAY_MINUTES=45   ' > "$SDSS_CONFIG"
+    delay
+    [ "$output" = "2700" ]
+}
+
+@test "the last WAKE_DELAY_MINUTES line wins" {
+    printf 'WAKE_DELAY_MINUTES=10\nWAKE_DELAY_MINUTES=20\n' > "$SDSS_CONFIG"
+    delay
+    [ "$output" = "1200" ]
+}
+
+@test "leading zeros are decimal, not octal" {
+    echo "WAKE_DELAY_MINUTES=010" > "$SDSS_CONFIG"
+    delay
+    [ "$output" = "600" ]
+}
+
+@test "the limits 1 and 10080 minutes are accepted" {
+    echo "WAKE_DELAY_MINUTES=1" > "$SDSS_CONFIG"
+    delay
     [ "$output" = "60" ]
+    echo "WAKE_DELAY_MINUTES=10080" > "$SDSS_CONFIG"
+    delay
+    [ "$output" = "604800" ]
 }
 
-@test "effective_delay falls back for garbage" {
-    run --separate-stderr bash -c 'source "$1"; WAKE_DELAY=abc; effective_delay' _ "$SCRIPT"
-    [ "$output" = "10800" ]
-    grep -q "invalid WAKE_DELAY" "$SDSS_LOGFILE"
+@test "invalid values fall back to the default and are logged" {
+    for bad in 0 10081 abc -5 1e3 "" "5 6" 99999999999999999999; do
+        rm -f "$SDSS_LOGFILE"
+        echo "WAKE_DELAY_MINUTES=$bad" > "$SDSS_CONFIG"
+        delay
+        [ "$output" = "10800" ]
+        grep -q "no valid WAKE_DELAY_MINUTES" "$SDSS_LOGFILE"
+    done
 }
 
-@test "effective_delay falls back for zero" {
-    run --separate-stderr bash -c 'source "$1"; WAKE_DELAY=0; effective_delay' _ "$SCRIPT"
+@test "an empty config file falls back to the default and is logged" {
+    : > "$SDSS_CONFIG"
+    delay
     [ "$output" = "10800" ]
+    grep -q "no valid WAKE_DELAY_MINUTES" "$SDSS_LOGFILE"
+}
+
+@test "a config without the setting falls back to the default and is logged" {
+    echo "# nothing here" > "$SDSS_CONFIG"
+    delay
+    [ "$output" = "10800" ]
+    grep -q "no valid WAKE_DELAY_MINUTES" "$SDSS_LOGFILE"
+}
+
+@test "the config is parsed, never executed" {
+    printf 'WAKE_DELAY_MINUTES=5; touch %s/pwned\n$(touch %s/pwned2)\n' "$T" "$T" > "$SDSS_CONFIG"
+    delay
+    [ "$output" = "10800" ]
+    [ ! -e "$T/pwned" ] && [ ! -e "$T/pwned2" ]
+}
+
+@test "an unreadable config is treated as invalid" {
+    if [ "$(id -u)" -eq 0 ]; then skip "root can read anything"; fi
+    echo "WAKE_DELAY_MINUTES=90" > "$SDSS_CONFIG"; chmod 000 "$SDSS_CONFIG"
+    delay
+    [ "$output" = "10800" ]
+}
+
+@test "the config is found next to the real script, through the symlink the system uses" {
+    mkdir -p "$T/home" "$T/sleepdir"
+    cp "$SCRIPT" "$T/home/steam-deck-smart-sleep.sh"
+    ln -s "$T/home/steam-deck-smart-sleep.sh" "$T/sleepdir/steam-deck-smart-sleep.sh"
+    echo "WAKE_DELAY_MINUTES=30" > "$T/home/smart-sleep.conf"
+    unset SDSS_CONFIG
+    run --separate-stderr bash -c 'source "$1"; config_file; effective_delay' _ "$T/sleepdir/steam-deck-smart-sleep.sh"
+    [ "${lines[0]}" = "$T/home/smart-sleep.conf" ]
+    [ "${lines[1]}" = "1800" ]
+}
+
+@test "a config change applies to the next alarm without reinstalling" {
+    echo "WAKE_DELAY_MINUTES=10" > "$SDSS_CONFIG"
+    run call schedule_alarm
+    [ "$(cat "$SDSS_MARKER")" = "1600" ]
+    echo "WAKE_DELAY_MINUTES=20" > "$SDSS_CONFIG"
+    run call schedule_alarm
+    [ "$(cat "$SDSS_MARKER")" = "2200" ]
 }
 
 # --------------------------------------------------------------- clear_alarm

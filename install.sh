@@ -7,7 +7,12 @@
 # symlinks from the system locations.
 #
 # Usage (once as root on your Steam Deck):
-#   sudo bash install.sh
+#   sudo bash install.sh [--minutes N]
+#
+# The sleep time is asked for interactively (default 180 minutes) and saved
+# to ~/steam-deck-smart-sleep/smart-sleep.conf.  An existing config is never
+# overwritten by a reinstall or an update; pass --minutes N to change it
+# without a prompt (e.g. curl ... | sudo bash -s -- --minutes 90).
 #
 # After the first run the hook is installed and this script registers itself
 # as a systemd boot timer so the installation is automatically re-applied
@@ -40,6 +45,14 @@ SOURCE_FILES=("$HOOK_NAME" "$SERVICE_UNIT" "$TIMER_UNIT" "install.sh")
 OPTIONAL_FILES=("uninstall.sh")
 
 TARGET_SCRIPT="$TARGET_DIR/$HOOK_NAME"
+
+# Settings kept next to the installed files so updates never touch them.
+CONFIG_NAME="smart-sleep.conf"
+DEFAULT_MINUTES=180
+MAX_MINUTES=10080   # one week
+# Where interactive answers come from.  Under `curl | bash` stdin is the
+# script itself, so we read the terminal directly.
+TTY_DEV="${SDSS_TTY:-/dev/tty}"
 
 # Set when we have switched the root filesystem to read-write, so the EXIT
 # trap knows it has to switch it back.
@@ -135,6 +148,9 @@ resolve_paths() {
     # than /root so that the files are easy to inspect and modify later.
     # The boot service sets SDSS_INSTALL_DIR explicitly: systemd does not set
     # $HOME for services without User=.
+    # The config file belongs to the invoking user so they can edit it without
+    # sudo; everything else stays root-owned.
+    CONFIG_OWNER="root"
     if [ -n "${SDSS_INSTALL_DIR:-}" ]; then
         SLEEP_FIX_DIR="$SDSS_INSTALL_DIR"
     else
@@ -142,6 +158,7 @@ resolve_paths() {
         if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
             user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
             [ -n "$user_home" ] || die "could not determine the home directory of $SUDO_USER"
+            CONFIG_OWNER="$SUDO_USER"
         else
             user_home="${HOME:-}"
             [ -n "$user_home" ] || die "HOME is not set; set SDSS_INSTALL_DIR to the install directory"
@@ -149,6 +166,7 @@ resolve_paths() {
         SLEEP_FIX_DIR="$user_home/steam-deck-smart-sleep"
     fi
     HOOK_DEST="$SLEEP_FIX_DIR/$HOOK_NAME"
+    CONFIG_DEST="$SLEEP_FIX_DIR/$CONFIG_NAME"
     SERVICE_DEST="$SLEEP_FIX_DIR/$SERVICE_UNIT"
     TIMER_DEST="$SLEEP_FIX_DIR/$TIMER_UNIT"
     # The systemd service always re-runs the persistent copy stored in
@@ -203,6 +221,125 @@ locate_sources() {
         || die "no usable source files: download failed or disabled, and no complete local copy in '${SCRIPT_DIR:-<none>}'"
     FILES_DIR="$SCRIPT_DIR"
     info "Using local files from $FILES_DIR"
+}
+
+# True when $1 is a whole number of minutes in 1..MAX_MINUTES.
+valid_minutes() {
+    [[ "$1" =~ ^[0-9]+$ ]] || return 1
+    local n=$((10#$1))
+    [ "$n" -ge 1 ] && [ "$n" -le "$MAX_MINUTES" ]
+}
+
+# Parse the command line; sets MINUTES_ARG (empty when --minutes is not given).
+parse_args() {
+    MINUTES_ARG=""
+    local given=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --minutes)
+                [ $# -ge 2 ] || die "--minutes needs a value"
+                MINUTES_ARG="$2"
+                given=1
+                shift 2
+                ;;
+            --minutes=*)
+                MINUTES_ARG="${1#--minutes=}"
+                given=1
+                shift
+                ;;
+            *)
+                die "unknown option: $1 (usage: install.sh [--minutes N])"
+                ;;
+        esac
+    done
+    if [ "$given" -eq 1 ]; then
+        valid_minutes "$MINUTES_ARG" \
+            || die "--minutes must be a whole number between 1 and $MAX_MINUTES (got '$MINUTES_ARG')"
+        MINUTES_ARG=$((10#$MINUTES_ARG))
+    fi
+}
+
+# True when there is a terminal to ask on.
+can_prompt() {
+    { : < "$TTY_DEV"; } 2>/dev/null
+}
+
+# Ask how many minutes to sleep; prints the answer (default on empty input,
+# end of input or after three bad answers).  The prompt goes to stderr.
+prompt_minutes() {
+    local fd answer
+    exec {fd}< "$TTY_DEV"
+    for _ in 1 2 3; do
+        printf 'Minutes to sleep before auto-shutdown [%s]: ' "$DEFAULT_MINUTES" >&2
+        read -r -u "$fd" answer || answer=""
+        answer="${answer//[[:space:]]/}"
+        answer="${answer:-$DEFAULT_MINUTES}"
+        if valid_minutes "$answer"; then
+            exec {fd}<&-
+            echo $((10#$answer))
+            return 0
+        fi
+        error "Please enter a whole number of minutes between 1 and $MAX_MINUTES."
+    done
+    exec {fd}<&-
+    error "Too many invalid answers; using the default of $DEFAULT_MINUTES minutes."
+    echo "$DEFAULT_MINUTES"
+}
+
+write_config() {
+    cat > "$CONFIG_DEST" <<CONF
+# steam-deck-smart-sleep settings.
+# Kept across updates; delete this file to go back to the default.
+#
+# Minutes the device sleeps before it wakes to either go back to sleep (if
+# charging) or shut down (if not).  Whole number, 1 to $MAX_MINUTES.
+# Takes effect the next time the device goes to sleep.
+WAKE_DELAY_MINUTES=$1
+CONF
+    chown "$CONFIG_OWNER" "$CONFIG_DEST"
+    chmod 644 "$CONFIG_DEST"
+}
+
+# Decide the sleep time: --minutes wins, an existing config is kept, otherwise
+# ask (or use the default when there is no terminal, e.g. the boot run).
+setup_config() {
+    if [ -n "$MINUTES_ARG" ]; then
+        info "Setting the sleep time to $MINUTES_ARG minutes (--minutes)"
+        write_config "$MINUTES_ARG"
+    elif [ -e "$CONFIG_DEST" ]; then
+        info "Keeping your existing settings in $CONFIG_DEST"
+    elif can_prompt; then
+        write_config "$(prompt_minutes)"
+    else
+        info "No terminal to ask on; using the default of $DEFAULT_MINUTES minutes"
+        write_config "$DEFAULT_MINUTES"
+    fi
+}
+
+# Echo the configured minutes, or nothing if the file has no valid value.
+config_minutes() {
+    local line value minutes=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [[ "$line" =~ ^WAKE_DELAY_MINUTES=([0-9]+)[[:space:]]*$ ]]; then
+            # copy first: valid_minutes runs its own regex and clobbers BASH_REMATCH
+            value="${BASH_REMATCH[1]}"
+            if valid_minutes "$value"; then
+                minutes=$((10#$value))
+            fi
+        fi
+    done < "$CONFIG_DEST"
+    echo "$minutes"
+}
+
+print_settings() {
+    local minutes
+    minutes=$(config_minutes)
+    if [ -n "$minutes" ]; then
+        info "Auto-shutdown delay: $minutes minutes. To change it, edit $CONFIG_DEST"
+        info "(it takes effect the next time the device goes to sleep)."
+    else
+        info "$CONFIG_DEST has no valid WAKE_DELAY_MINUTES; the default of $DEFAULT_MINUTES minutes will be used."
+    fi
 }
 
 # Put the real files into the home directory.  This needs no write access to
@@ -299,9 +436,11 @@ main() {
     fi
 
     trap cleanup EXIT
+    parse_args "$@"
     resolve_paths
     locate_sources
     stage_files
+    setup_config
 
     if system_links_current; then
         info "Already installed; nothing to do."
@@ -312,6 +451,7 @@ main() {
     info "Installation complete: original hook at $HOOK_DEST"
     register_timer
     info "Done. The hook will be automatically reinstalled on every boot."
+    print_settings
     print_uninstall_help
 }
 

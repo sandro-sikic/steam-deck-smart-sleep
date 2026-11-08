@@ -11,6 +11,7 @@ import { CommandBox } from './components/CommandBox';
 
 import {
 	INSTALL_COMMAND,
+	INSTALL_MINUTES_COMMAND,
 	UNINSTALL_COMMAND,
 	UNINSTALL_OFFLINE_COMMAND,
 } from './commands';
@@ -204,7 +205,27 @@ export default function App() {
 					label="Quick Install"
 					description="Run this command in your Steam Deck terminal"
 					command={INSTALL_COMMAND}
-				/>
+				>
+					<div className="mt-5 space-y-2 text-sm text-slate-300">
+						<p>
+							The installer asks how many minutes to sleep before auto-shutdown
+							(default <strong className="text-white">180</strong>, i.e. 3 hours)
+							and saves it in{' '}
+							<code className="text-slate-200">
+								~/steam-deck-smart-sleep/smart-sleep.conf
+							</code>
+							. Edit that file any time; updates keep your setting.
+						</p>
+						<p className="text-slate-400">
+							To skip the question, add <code>--minutes</code>:
+						</p>
+						<div className="bg-slate-950/80 border border-slate-700/50 rounded-xl p-4 overflow-x-auto shadow-inner">
+							<code className="text-green-400 font-mono text-sm break-all">
+								{INSTALL_MINUTES_COMMAND}
+							</code>
+						</div>
+					</div>
+				</CommandBox>
 
 				{/* Uninstall */}
 				<div className="w-full max-w-3xl mt-10">

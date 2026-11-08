@@ -35,7 +35,7 @@ Run the installer once as root:
 curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh | sudo bash
 ```
 
-The installer always tries to fetch the latest files from GitHub first. If that fails (offline, GitHub down) it falls back to the files next to `install.sh`, e.g. from a local clone. To skip the download and install your local edits, run `sudo SDSS_USE_LOCAL=1 bash install.sh`.
+The installer asks how many minutes the device should sleep before auto-shutdown (default 180) and saves it to `~/steam-deck-smart-sleep/smart-sleep.conf`; see [Configuration](#configuration). It always tries to fetch the latest files from GitHub first. If that fails (offline, GitHub down) it falls back to the files next to `install.sh`, e.g. from a local clone. To skip the download and install your local edits, run `sudo SDSS_USE_LOCAL=1 bash install.sh`.
 
 ### What the Installer Does
 
@@ -67,18 +67,25 @@ Your files in `~/steam-deck-smart-sleep` are **not** touched; delete that direct
 
 ## Configuration
 
-The wake delay is set by the `WAKE_DELAY` variable in `steam-deck-smart-sleep.sh` (default: `10800` seconds = 3 hours). To change it, edit the file in your `~/steam-deck-smart-sleep` directory — the symlink means the change takes effect immediately with no reinstall needed.
+The only setting is how long the device sleeps before it wakes to decide between sleeping again (charging) and shutting down (not charging). It is stored in `~/steam-deck-smart-sleep/smart-sleep.conf`:
 
-```bash
-nano ~/steam-deck-smart-sleep/steam-deck-smart-sleep.sh
-# change: WAKE_DELAY=10800
+```ini
+WAKE_DELAY_MINUTES=180
 ```
+
+- **During install** you are asked "Minutes to sleep before auto-shutdown [180]". Press enter for the default (3 hours). With no terminal to ask on (such as the boot-time reinstall) the default is used.
+- **Skip the question** with `--minutes`: `curl -fsSL …/install.sh | sudo bash -s -- --minutes 90` (or `sudo bash install.sh --minutes 90`). This also replaces an existing value.
+- **Change it later** by editing the file (no `sudo` needed if you installed with `sudo`, since the file belongs to you). It applies the next time the device goes to sleep; there is nothing to reinstall.
+- **Updates keep your time.** The installer never overwrites an existing config, including the boot-time update from GitHub. The setting is only lost if you delete the file or the whole `~/steam-deck-smart-sleep` directory, in which case the next run asks again (or falls back to 180 minutes).
+- **Valid values** are whole numbers from 1 to 10080 (one week). Anything else in the file is ignored with a note in the log, and the 180-minute default is used. The hook parses the file strictly and never executes it.
+- The uninstaller leaves the config in place along with the rest of the directory.
 
 ## Files
 
 | File                                       | Description                                                                                                                                                            |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `install.sh`                               | Installer. Copies files to `~/steam-deck-smart-sleep`, creates system symlinks, and registers the boot timer. Supports both local clone and `curl \| bash` invocation. |
+| `smart-sleep.conf`                         | Created by the installer in `~/steam-deck-smart-sleep` (not part of the repo): your sleep time in minutes. Preserved across updates.                                    |
 | `uninstall.sh`                             | Uninstaller. Stops and removes the timer, service and hook from the system and clears runtime state; leaves `~/steam-deck-smart-sleep` alone. A copy is installed there for offline use. |
 | `steam-deck-smart-sleep.sh`                | The systemd `system-sleep` hook. Programs the RTC alarm on suspend (`pre`) and handles wake logic on resume (`post`).                                                  |
 | `steam-deck-smart-sleep-installer.service` | Systemd service unit that runs `install.sh` on boot.                                                                                                                   |

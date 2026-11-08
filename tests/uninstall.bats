@@ -71,6 +71,8 @@ do_install() {
     [ -f "$d/steam-deck-smart-sleep-installer.service" ]
     [ -f "$d/steam-deck-smart-sleep-installer.timer" ]
     [ "$(cat "$d/my-notes.txt")" = precious ]
+    # the saved sleep time survives too
+    grep -q '^WAKE_DELAY_MINUTES=180$' "$d/smart-sleep.conf"
     [[ "$output" == *"left in place"* ]]
 }
 

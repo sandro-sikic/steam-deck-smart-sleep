@@ -22,6 +22,9 @@
 #   * if the system came back early we simply clear the alarm so it
 #     won't fire later and remove the marker file.
 #
+# The delay is read from smart-sleep.conf, which lives next to the installed
+# copy of this script (default 180 minutes when the file is missing or invalid).
+#
 # The hook never fails the suspend: every problem is logged and the device
 # simply falls back to normal sleep behaviour.
 #
@@ -33,12 +36,12 @@
 # alarm behind, so every step handles its own failure.
 set -uo pipefail
 
-# how many seconds after suspend to schedule the RTC alarm
-# edit this value directly to change the wake delay
-WAKE_DELAY=10800
-
-# used when WAKE_DELAY is not a positive integer
+# Seconds after suspend at which the RTC alarm fires when the config file is
+# missing or invalid.  The real setting is WAKE_DELAY_MINUTES in the config.
 DEFAULT_WAKE_DELAY=10800
+
+# the largest delay the config may ask for (one week), in minutes
+MAX_WAKE_MINUTES=10080
 
 # the log is rotated (once) when it grows past this many bytes
 MAX_LOG_BYTES=1048576
@@ -66,13 +69,48 @@ now_epoch() {
     date +%s
 }
 
-# Echo the effective delay: WAKE_DELAY when it is a positive integer,
-# otherwise the default.
-effective_delay() {
-    if [[ "$WAKE_DELAY" =~ ^[0-9]+$ ]] && [ "$WAKE_DELAY" -gt 0 ]; then
-        echo "$WAKE_DELAY"
+# Path of the config file: next to the real (symlink-resolved) script, i.e.
+# in ~/steam-deck-smart-sleep, unless SDSS_CONFIG says otherwise.
+config_file() {
+    if [ -n "${SDSS_CONFIG:-}" ]; then
+        echo "$SDSS_CONFIG"
     else
-        log_msg "invalid WAKE_DELAY '$WAKE_DELAY'; using $DEFAULT_WAKE_DELAY"
+        local self
+        self=$(readlink -f "${BASH_SOURCE[0]}")
+        echo "$(dirname "$self")/smart-sleep.conf"
+    fi
+}
+
+# Echo the WAKE_DELAY_MINUTES value of the config (the last one wins), or
+# nothing.  The file is parsed, never sourced: it sits in a user-writable
+# directory and this hook runs as root.
+read_config_minutes() {
+    local file line minutes="" lines=()
+    file=$(config_file)
+    [ -r "$file" ] || return 0
+    mapfile -t lines < "$file"
+    for line in "${lines[@]}"; do
+        if [[ "$line" =~ ^WAKE_DELAY_MINUTES=([0-9]+)[[:space:]]*$ ]]; then
+            minutes="${BASH_REMATCH[1]}"
+        fi
+    done
+    echo "$minutes"
+}
+
+# Echo the delay in seconds: the configured minutes when valid, otherwise the
+# default (logging why when a config file exists but is unusable).
+effective_delay() {
+    local file minutes
+    file=$(config_file)
+    if [ ! -e "$file" ]; then
+        echo "$DEFAULT_WAKE_DELAY"
+        return 0
+    fi
+    minutes=$(read_config_minutes)
+    if [ -n "$minutes" ] && [ $((10#$minutes)) -ge 1 ] && [ $((10#$minutes)) -le "$MAX_WAKE_MINUTES" ]; then
+        echo $((10#$minutes * 60))
+    else
+        log_msg "no valid WAKE_DELAY_MINUTES (1-$MAX_WAKE_MINUTES) in $file; using $((DEFAULT_WAKE_DELAY / 60)) minutes"
         echo "$DEFAULT_WAKE_DELAY"
     fi
 }

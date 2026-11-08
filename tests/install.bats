@@ -44,12 +44,13 @@ STUB
     export TMPDIR="$T/tmp"
     export SDSS_SCRIPT_DIR="$SRC"
     export SDSS_USE_LOCAL=1   # tests opt in to downloading
+    export SDSS_TTY="$T/no-tty"   # no terminal unless a test provides one; never the real /dev/tty
     unset SUDO_USER
     mkdir -p "$HOME" "$TMPDIR"
 }
 
 # Run the repo's installer against the fake clone in $SRC.
-inst() { bash "$REPO/install.sh"; }
+inst() { bash "$REPO/install.sh" "$@"; }
 
 skip_if_coverage() {
     [ -z "${SDSS_COVERAGE:-}" ] || skip "kcov cannot follow a piped/real entry point"
@@ -422,4 +423,179 @@ skip_if_coverage() {
     mkdir -p "$T/deckhome"
     run inst
     [[ "$output" == *"sudo $T/deckhome/steam-deck-smart-sleep/uninstall.sh"* ]]
+}
+
+# ------------------------------------------------------------ sleep-time config
+
+conf() { echo "$HOME/steam-deck-smart-sleep/smart-sleep.conf"; }
+minutes_in() { sed -n 's/^WAKE_DELAY_MINUTES=//p' "$1"; }
+
+@test "without a terminal the default of 180 minutes is written" {
+    run inst
+    [ "$status" -eq 0 ]
+    [ "$(minutes_in "$(conf)")" = "180" ]
+    [ "$(stat -c %a "$(conf)")" = 644 ]
+    [[ "$output" == *"No terminal to ask on; using the default of 180 minutes"* ]]
+    [[ "$output" == *"Auto-shutdown delay: 180 minutes. To change it, edit $(conf)"* ]]
+}
+
+@test "the config file explains itself" {
+    inst >/dev/null
+    grep -q "^# Kept across updates" "$(conf)"
+    grep -q "^# Takes effect the next time the device goes to sleep" "$(conf)"
+}
+
+@test "the user is asked and the answer is saved" {
+    echo 45 > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Minutes to sleep before auto-shutdown [180]:"* ]]
+    [ "$(minutes_in "$(conf)")" = "45" ]
+    [[ "$output" == *"Auto-shutdown delay: 45 minutes"* ]]
+}
+
+@test "pressing enter keeps the default" {
+    echo "" > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [ "$(minutes_in "$(conf)")" = "180" ]
+}
+
+@test "end of input keeps the default" {
+    : > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [ "$(minutes_in "$(conf)")" = "180" ]
+}
+
+@test "whitespace and leading zeros in the answer are normalised" {
+    echo "  0 30 " > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [ "$(minutes_in "$(conf)")" = "30" ]
+}
+
+@test "a bad answer is rejected and asked again" {
+    printf 'abc\n20\n' > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [[ "$output" == *"Please enter a whole number of minutes between 1 and 10080."* ]]
+    [ "$(minutes_in "$(conf)")" = "20" ]
+}
+
+@test "three bad answers fall back to the default" {
+    printf '0\n10081\nnope\n20\n' > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Too many invalid answers; using the default of 180 minutes."* ]]
+    [ "$(minutes_in "$(conf)")" = "180" ]
+}
+
+@test "an existing config is kept: no prompt on reinstall or update" {
+    mkdir -p "$HOME/steam-deck-smart-sleep"
+    printf 'WAKE_DELAY_MINUTES=45\n' > "$(conf)"
+    echo 99 > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Keeping your existing settings in $(conf)"* ]]
+    ! [[ "$output" == *"Minutes to sleep"* ]]
+    [ "$(minutes_in "$(conf)")" = "45" ]
+}
+
+@test "an update that downloads newer files keeps the user's time" {
+    inst >/dev/null
+    printf 'WAKE_DELAY_MINUTES=75\n' > "$(conf)"
+    cp -r "$SRC" "$T/remote"
+    echo "# newer" >> "$T/remote/steam-deck-smart-sleep.sh"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    unset SDSS_USE_LOCAL
+    run inst
+    [ "$status" -eq 0 ]
+    grep -q "# newer" "$HOME/steam-deck-smart-sleep/steam-deck-smart-sleep.sh"
+    [ "$(minutes_in "$(conf)")" = "75" ]
+}
+
+@test "deleting the config brings back the prompt on the next run" {
+    echo 30 > "$T/tty"
+    SDSS_TTY="$T/tty" inst >/dev/null
+    rm "$(conf)"
+    echo 60 > "$T/tty"
+    SDSS_TTY="$T/tty" run inst
+    [ "$(minutes_in "$(conf)")" = "60" ]
+}
+
+@test "an already-installed run still preserves the config and prints nothing extra" {
+    echo 30 > "$T/tty"
+    SDSS_TTY="$T/tty" inst >/dev/null
+    run inst
+    [[ "$output" == *"Already installed"* ]]
+    [ "$(minutes_in "$(conf)")" = "30" ]
+}
+
+@test "--minutes sets the time without asking" {
+    echo 99 > "$T/tty"
+    SDSS_TTY="$T/tty" run inst --minutes 90
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Setting the sleep time to 90 minutes (--minutes)"* ]]
+    ! [[ "$output" == *"Minutes to sleep"* ]]
+    [ "$(minutes_in "$(conf)")" = "90" ]
+}
+
+@test "--minutes=N works and normalises leading zeros" {
+    run inst --minutes=015
+    [ "$status" -eq 0 ]
+    [ "$(minutes_in "$(conf)")" = "15" ]
+}
+
+@test "--minutes replaces an existing config" {
+    inst --minutes 30 >/dev/null
+    run inst --minutes 120
+    [ "$(minutes_in "$(conf)")" = "120" ]
+}
+
+@test "bad --minutes values are rejected before anything is installed" {
+    for bad in 0 10081 abc "" -5; do
+        run inst "--minutes=$bad"
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"--minutes must be a whole number between 1 and 10080"* ]]
+    done
+    [ ! -e "$HOME/steam-deck-smart-sleep" ]
+}
+
+@test "--minutes without a value is rejected" {
+    run inst --minutes
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"--minutes needs a value"* ]]
+}
+
+@test "an unknown option is rejected" {
+    run inst --bogus
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"unknown option: --bogus"* ]]
+    [ ! -e "$HOME/steam-deck-smart-sleep" ]
+}
+
+@test "the config belongs to the sudo user so it can be edited without sudo" {
+    export SUDO_USER=deck
+    export GETENT_OUT="deck:x:1000:1000::$T/deckhome:/bin/bash"
+    mkdir -p "$T/deckhome"
+    run inst
+    [ "$status" -eq 0 ]
+    grep -q "^chown deck $T/deckhome/steam-deck-smart-sleep/smart-sleep.conf$" "$CALLS"
+}
+
+@test "without sudo the config is owned by root" {
+    run inst
+    grep -q "^chown root $(conf)$" "$CALLS"
+}
+
+@test "a config with no valid value is reported at the end of the install" {
+    mkdir -p "$HOME/steam-deck-smart-sleep"
+    printf 'WAKE_DELAY_MINUTES=banana\n' > "$(conf)"
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"has no valid WAKE_DELAY_MINUTES; the default of 180 minutes will be used."* ]]
+}
+
+@test "the last valid line wins when reporting, invalid lines are ignored" {
+    mkdir -p "$HOME/steam-deck-smart-sleep"
+    printf 'WAKE_DELAY_MINUTES=10\nWAKE_DELAY_MINUTES=bad\nWAKE_DELAY_MINUTES=25' > "$(conf)"
+    run inst
+    [[ "$output" == *"Auto-shutdown delay: 25 minutes"* ]]
 }

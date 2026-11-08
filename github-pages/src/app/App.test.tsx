@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import {
 	INSTALL_COMMAND,
+	INSTALL_MINUTES_COMMAND,
 	UNINSTALL_COMMAND,
 	UNINSTALL_OFFLINE_COMMAND,
 } from './commands';
@@ -21,6 +22,9 @@ describe('commands', () => {
 	it('point at the install and uninstall scripts on main', () => {
 		expect(INSTALL_COMMAND).toBe(
 			'curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh | sudo bash',
+		);
+		expect(INSTALL_MINUTES_COMMAND).toBe(
+			'curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh | sudo bash -s -- --minutes 90',
 		);
 		expect(UNINSTALL_COMMAND).toBe(
 			'curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/uninstall.sh | sudo bash',
@@ -42,6 +46,15 @@ describe('App', () => {
 			'href',
 			'https://github.com/sandro-sikic/steam-deck-smart-sleep',
 		);
+	});
+
+	it('explains the sleep-time setting and how to skip the question', () => {
+		render(<App />);
+		expect(screen.getByText(/asks how many minutes to sleep/i)).toBeVisible();
+		expect(
+			screen.getByText('~/steam-deck-smart-sleep/smart-sleep.conf'),
+		).toBeInTheDocument();
+		expect(screen.getByText(INSTALL_MINUTES_COMMAND)).toBeInTheDocument();
 	});
 
 	it('explains how to uninstall, online and offline', () => {
