@@ -30,7 +30,7 @@ make_stub() {
 echo "$name \$*" >> "\$CALLS"
 mode="\$2"
 fail="\$FAIL_${name^^}"
-if [ "\$fail" = all ] || [ "\$fail" = "\$mode" ]; then echo "stub failure" >&2; exit 1; fi
+if [ "\$fail" = all ] || [ "\$fail" = "\$mode" ] || [ "\$fail" = "\$1" ]; then echo "stub failure" >&2; exit 1; fi
 exit 0
 STUB
     chmod +x "$T/$name"
@@ -323,8 +323,48 @@ delay() { run --separate-stderr call effective_delay; }
     echo 900 > "$SDSS_MARKER"
     set_bat Discharging
     run call main post suspend
-    grep -q "systemctl --no-block poweroff" "$CALLS"
+    grep -q "^systemctl poweroff$" "$CALLS"
     [ ! -e "$SDSS_MARKER" ]
+}
+
+# Regression: the re-suspend only works if pending jobs are cancelled first,
+# and plain (blocking) calls are used, exactly as in the original hook.
+sysctl_calls() { grep '^systemctl ' "$CALLS"; }
+
+@test "re-suspend cancels pending jobs first, then suspends, with no other systemctl calls" {
+    echo 900 > "$SDSS_MARKER"
+    set_ac AC 1
+    run call main post suspend
+    run sysctl_calls
+    [ "${lines[0]}" = "systemctl cancel" ]
+    [ "${lines[1]}" = "systemctl suspend" ]
+    [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "shutdown cancels pending jobs first, then powers off, with no other systemctl calls" {
+    echo 900 > "$SDSS_MARKER"
+    set_bat Discharging
+    run call main post suspend
+    run sysctl_calls
+    [ "${lines[0]}" = "systemctl cancel" ]
+    [ "${lines[1]}" = "systemctl poweroff" ]
+    [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "no systemctl call uses --no-block" {
+    echo 900 > "$SDSS_MARKER"
+    set_ac AC 1
+    run call main post suspend
+    ! grep -q -- "--no-block" "$CALLS"
+}
+
+@test "a failing cancel is logged but the suspend is still attempted" {
+    echo 900 > "$SDSS_MARKER"
+    set_ac AC 1
+    FAIL_SYSTEMCTL=cancel run call main post suspend
+    [ "$status" -eq 0 ]
+    grep -q "systemctl cancel failed" "$SDSS_LOGFILE"
+    grep -q "^systemctl suspend$" "$CALLS"
 }
 
 @test "post logs a failing poweroff" {
@@ -339,7 +379,7 @@ delay() { run --separate-stderr call effective_delay; }
     set_ac AC 1
     run call main post suspend
     [ "$(cat "$SDSS_MARKER")" = "11800" ]
-    grep -q "systemctl --no-block suspend" "$CALLS"
+    grep -q "^systemctl suspend$" "$CALLS"
     ! grep -q poweroff "$CALLS"
 }
 

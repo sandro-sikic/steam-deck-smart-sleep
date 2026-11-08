@@ -174,11 +174,15 @@ is_charging() {
     return 1
 }
 
-# Run a systemctl action without waiting: the hook runs while sleep.target is
-# still being torn down, and a blocking call from in here can deadlock.
-systemctl_nowait() {
+# Run a systemctl action from inside the hook.  This hook is running as part
+# of the sleep job that systemd is still processing, so a new suspend or
+# poweroff request would collide with it and be dropped.  `systemctl cancel`
+# (no arguments: all pending jobs) clears that job first.  Keep this exact
+# sequence: dropping the cancel stopped the device from going back to sleep.
+systemctl_action() {
     local out
-    out=$("$SYSTEMCTL" --no-block "$1" 2>&1) || log_msg "systemctl $1 failed: $out"
+    "$SYSTEMCTL" cancel >/dev/null 2>&1 || log_msg "systemctl cancel failed"
+    out=$("$SYSTEMCTL" "$1" 2>&1) || log_msg "systemctl $1 failed: $out"
 }
 
 handle_pre() {
@@ -222,14 +226,14 @@ handle_post() {
         # cannot be set we stay awake rather than sleep with no way to wake.
         log_msg "device is charging; rescheduling alarm and returning to sleep"
         if schedule_alarm; then
-            systemctl_nowait suspend
+            systemctl_action suspend
         else
             log_msg "could not reschedule; staying awake"
         fi
     else
         # Not charging – initiate a clean shutdown
         log_msg "device is not charging; initiating shutdown sequence"
-        systemctl_nowait poweroff
+        systemctl_action poweroff
     fi
 }
 

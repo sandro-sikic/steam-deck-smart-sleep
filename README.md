@@ -12,7 +12,7 @@ The script is a systemd `system-sleep` hook. Every time the device enters sleep,
    - **Not charging** → initiates a clean shutdown (`systemctl poweroff`) to preserve battery.
 3. **Device woken manually before the timer** — the RTC alarm is cancelled and nothing else happens.
 
-The hook is built to fail safe: it never blocks a suspend, so if the alarm cannot be set the device simply sleeps normally. If it is charging but cannot re-arm the alarm, it stays awake rather than sleeping with no way to wake. It also validates `WAKE_DELAY` and the saved marker, issues `systemctl` calls with `--no-block` (the hook runs while `sleep.target` is still being torn down), and rotates its log at 1 MiB.
+The hook is built to fail safe: it never blocks a suspend, so if the alarm cannot be set the device simply sleeps normally. If it is charging but cannot re-arm the alarm, it stays awake rather than sleeping with no way to wake. It also validates the configured delay and the saved marker, runs `systemctl cancel` before every suspend or poweroff it issues (the hook runs inside the sleep job systemd is still processing, which would otherwise swallow the request), and rotates its log at 1 MiB.
 
 All activity is logged to `/var/log/steam-deck-smart-sleep.log`.
 
