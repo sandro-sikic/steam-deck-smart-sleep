@@ -7,7 +7,7 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
-SDSS_COVERAGE=1 kcov --include-path="$repo/install.sh,$repo/steam-deck-smart-sleep.sh" \
+SDSS_COVERAGE=1 kcov --include-path="$repo/install.sh,$repo/uninstall.sh,$repo/steam-deck-smart-sleep.sh" \
     "$out" bats "$repo/tests" >"$out/run.log" 2>&1 || { grep -E '^(not ok|#)' "$out/run.log"; echo "tests failed" >&2; exit 1; }
 
 python3 - "$out" <<'PY'
