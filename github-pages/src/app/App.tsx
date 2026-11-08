@@ -1,26 +1,21 @@
-import { useState } from 'react';
 import {
-	Copy,
-	Check,
 	Github,
 	AlertCircle,
 	Battery,
 	Power,
 	Zap,
 	PlayCircle,
+	Trash2,
 } from 'lucide-react';
+import { CommandBox } from './components/CommandBox';
+
+import {
+	INSTALL_COMMAND,
+	UNINSTALL_COMMAND,
+	UNINSTALL_OFFLINE_COMMAND,
+} from './commands';
 
 export default function App() {
-	const [copied, setCopied] = useState(false);
-	const command =
-		'curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/install.sh | sudo bash';
-
-	const handleCopy = async () => {
-		await navigator.clipboard.writeText(command);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
-	};
-
 	return (
 		<div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
 			{/* GitHub Link */}
@@ -204,46 +199,51 @@ export default function App() {
 					</div>
 				</div>
 
-				{/* Command Box */}
-				<div className="w-full max-w-3xl">
-					<div className="relative bg-gradient-to-br from-slate-800/60 to-slate-900/60 backdrop-blur-md border border-slate-600/50 rounded-2xl p-8 shadow-2xl hover:shadow-blue-500/10 transition-shadow">
-						<div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-purple-500/5 rounded-2xl"></div>
+				{/* Install */}
+				<CommandBox
+					label="Quick Install"
+					description="Run this command in your Steam Deck terminal"
+					command={INSTALL_COMMAND}
+				/>
 
-						<div className="relative">
-							<div className="flex items-center justify-between mb-6">
-								<div>
-									<span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-										Quick Install
-									</span>
-									<span className="text-sm text-slate-300">
-										Run this command in your Steam Deck terminal
-									</span>
+				{/* Uninstall */}
+				<div className="w-full max-w-3xl mt-10">
+					<CommandBox
+						label="Uninstall"
+						description="Changed your mind? Run this to remove everything"
+						command={UNINSTALL_COMMAND}
+						accent="red"
+					>
+						<div className="mt-5 space-y-4 text-sm text-slate-300">
+							<div>
+								<p className="flex items-center gap-2 font-semibold text-white mb-2">
+									<Trash2 className="w-4 h-4 text-rose-400" />
+									No internet? Use the local copy
+								</p>
+								<p className="mb-2">
+									The installer keeps the uninstaller on your Steam Deck:
+								</p>
+								<div className="bg-slate-950/80 border border-slate-700/50 rounded-xl p-4 overflow-x-auto shadow-inner">
+									<code className="text-rose-300 font-mono text-sm break-all">
+										{UNINSTALL_OFFLINE_COMMAND}
+									</code>
 								</div>
-								<button
-									onClick={handleCopy}
-									className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 rounded-lg transition-all font-medium shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30 hover:scale-105"
-								>
-									{copied ? (
-										<>
-											<Check className="w-4 h-4" />
-											Copied!
-										</>
-									) : (
-										<>
-											<Copy className="w-4 h-4" />
-											Copy
-										</>
-									)}
-								</button>
 							</div>
 
-							<div className="bg-slate-950/80 border border-slate-700/50 rounded-xl p-5 overflow-x-auto shadow-inner">
-								<code className="text-green-400 font-mono text-sm md:text-base break-all">
-									{command}
-								</code>
-							</div>
+							<ul className="space-y-1 ml-1">
+								<li>
+									<strong className="text-white">Removes:</strong> the sleep hook,
+									the boot timer and service, any pending wake alarm, and the log
+									file.
+								</li>
+								<li>
+									<strong className="text-white">Keeps:</strong> your files in{' '}
+									<code className="text-slate-200">~/steam-deck-smart-sleep</code>.
+									Delete that folder yourself to remove them too.
+								</li>
+							</ul>
 						</div>
-					</div>
+					</CommandBox>
 				</div>
 
 				{/* Footer */}

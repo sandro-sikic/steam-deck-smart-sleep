@@ -34,6 +34,10 @@ jobs:
         working-directory: github-pages
         run: npm install
 
+      - name: Test (100% coverage required)
+        working-directory: github-pages
+        run: npm run coverage
+
       - name: Build
         working-directory: github-pages
         run: npm run build
