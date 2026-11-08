@@ -40,7 +40,7 @@ The installer always tries to fetch the latest files from GitHub first. If that 
 ### What the Installer Does
 
 1. Disables the SteamOS read-only filesystem temporarily.
-2. Fetches the latest files (or uses the local fallback) and copies them into `~/steam-deck-smart-sleep` (uses the invoking user's home when run with `sudo`, not `/root`).
+2. Fetches the latest files (or uses the local fallback) and copies them, including `uninstall.sh`, into `~/steam-deck-smart-sleep` (uses the invoking user's home when run with `sudo`, not `/root`).
 3. Creates symlinks from system paths to the home directory copies:
    ```
    /usr/lib/systemd/system-sleep/steam-deck-smart-sleep.sh  ->  ~/steam-deck-smart-sleep/steam-deck-smart-sleep.sh
@@ -51,9 +51,11 @@ The installer always tries to fetch the latest files from GitHub first. If that 
 
 ## Uninstalling
 
-Run the uninstaller as root, either from a clone or straight from GitHub:
+The installer also keeps a copy of the uninstaller in `~/steam-deck-smart-sleep`, so you can uninstall offline (it is optional: if it can't be fetched, the install still succeeds). Run it as root, from that copy, from a clone, or straight from GitHub:
 
 ```bash
+sudo ~/steam-deck-smart-sleep/uninstall.sh
+# or, from a clone
 sudo bash uninstall.sh
 # or
 curl -fsSL https://raw.githubusercontent.com/sandro-sikic/steam-deck-smart-sleep/main/uninstall.sh | sudo bash
@@ -77,7 +79,7 @@ nano ~/steam-deck-smart-sleep/steam-deck-smart-sleep.sh
 | File                                       | Description                                                                                                                                                            |
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `install.sh`                               | Installer. Copies files to `~/steam-deck-smart-sleep`, creates system symlinks, and registers the boot timer. Supports both local clone and `curl \| bash` invocation. |
-| `uninstall.sh`                             | Uninstaller. Stops and removes the timer, service and hook from the system and clears runtime state; leaves `~/steam-deck-smart-sleep` alone.                          |
+| `uninstall.sh`                             | Uninstaller. Stops and removes the timer, service and hook from the system and clears runtime state; leaves `~/steam-deck-smart-sleep` alone. A copy is installed there for offline use. |
 | `steam-deck-smart-sleep.sh`                | The systemd `system-sleep` hook. Programs the RTC alarm on suspend (`pre`) and handles wake logic on resume (`post`).                                                  |
 | `steam-deck-smart-sleep-installer.service` | Systemd service unit that runs `install.sh` on boot.                                                                                                                   |
 | `steam-deck-smart-sleep-installer.timer`   | Systemd timer unit that triggers the service on every boot.                                                                                                            |

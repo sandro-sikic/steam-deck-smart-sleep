@@ -14,7 +14,7 @@ setup() {
     # a pretend local clone
     SRC="$T/src"
     mkdir -p "$SRC"
-    cp "$REPO"/install.sh "$REPO"/steam-deck-smart-sleep.sh \
+    cp "$REPO"/install.sh "$REPO"/uninstall.sh "$REPO"/steam-deck-smart-sleep.sh \
        "$REPO"/steam-deck-smart-sleep-installer.service \
        "$REPO"/steam-deck-smart-sleep-installer.timer "$SRC/"
 
@@ -68,6 +68,8 @@ skip_if_coverage() {
     d="$HOME/steam-deck-smart-sleep"
     [ -x "$d/steam-deck-smart-sleep.sh" ]
     [ "$(stat -c %a "$d/install.sh")" = 755 ]
+    [ "$(stat -c %a "$d/uninstall.sh")" = 755 ]
+    [[ "$output" == *"To uninstall later: sudo $d/uninstall.sh"* ]]
     [ "$(stat -c %a "$d/steam-deck-smart-sleep-installer.service")" = 644 ]
     [ "$(readlink "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh")" = "$d/steam-deck-smart-sleep.sh" ]
     [ "$(readlink "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.service")" = "$d/steam-deck-smart-sleep-installer.service" ]
@@ -336,4 +338,64 @@ skip_if_coverage() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"falling back to local files"* ]]
     [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+}
+
+# ------------------------------------------------- optional offline uninstaller
+
+@test "uninstall.sh is downloaded alongside the required files" {
+    cp -r "$SRC" "$T/remote"
+    rm "$SRC/uninstall.sh"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    unset SDSS_USE_LOCAL
+    run inst
+    [ "$status" -eq 0 ]
+    [ -x "$HOME/steam-deck-smart-sleep/uninstall.sh" ]
+    cmp "$HOME/steam-deck-smart-sleep/uninstall.sh" "$T/remote/uninstall.sh"
+}
+
+@test "a missing remote uninstall.sh does not stop the install" {
+    cp -r "$SRC" "$T/remote"
+    rm "$T/remote/uninstall.sh"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    unset SDSS_USE_LOCAL
+    run inst
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"uninstall.sh unavailable; skipping"* ]]
+    [ ! -e "$HOME/steam-deck-smart-sleep/uninstall.sh" ]
+    ! [[ "$output" == *"To uninstall later"* ]]
+    [ -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+}
+
+@test "an empty remote uninstall.sh is skipped, keeping an existing copy" {
+    mkdir -p "$HOME/steam-deck-smart-sleep"
+    echo "# existing" > "$HOME/steam-deck-smart-sleep/uninstall.sh"
+    cp -r "$SRC" "$T/remote"
+    : > "$T/remote/uninstall.sh"
+    export SDSS_GITHUB_RAW="file://$T/remote"
+    unset SDSS_USE_LOCAL
+    run inst
+    [ "$status" -eq 0 ]
+    grep -q "# existing" "$HOME/steam-deck-smart-sleep/uninstall.sh"
+}
+
+@test "the local fallback copies uninstall.sh when present, and works without it" {
+    run inst
+    [ -x "$HOME/steam-deck-smart-sleep/uninstall.sh" ]
+    rm -rf "$HOME/steam-deck-smart-sleep" "$SDSS_TARGET_DIR" "$SDSS_SYSTEMD_DIR"
+    rm "$SRC/uninstall.sh"
+    run inst
+    [ "$status" -eq 0 ]
+    [ ! -e "$HOME/steam-deck-smart-sleep/uninstall.sh" ]
+}
+
+@test "end to end: the copied uninstall.sh removes the install offline" {
+    skip_if_coverage
+    inst >/dev/null
+    export SDSS_MARKER="$T/marker" SDSS_LOGFILE="$T/log" SDSS_RTCWAKE="$T/bin/rtcwake"
+    printf '#!/bin/bash\nexit 0\n' > "$T/bin/rtcwake"; chmod +x "$T/bin/rtcwake"
+    run bash "$HOME/steam-deck-smart-sleep/uninstall.sh"
+    [ "$status" -eq 0 ]
+    [ ! -L "$SDSS_TARGET_DIR/steam-deck-smart-sleep.sh" ]
+    [ ! -L "$SDSS_SYSTEMD_DIR/steam-deck-smart-sleep-installer.timer" ]
+    [ -f "$HOME/steam-deck-smart-sleep/install.sh" ]
 }

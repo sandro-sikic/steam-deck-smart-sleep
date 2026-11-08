@@ -35,6 +35,9 @@ HOOK_NAME="steam-deck-smart-sleep.sh"
 SERVICE_UNIT="steam-deck-smart-sleep-installer.service"
 TIMER_UNIT="steam-deck-smart-sleep-installer.timer"
 SOURCE_FILES=("$HOOK_NAME" "$SERVICE_UNIT" "$TIMER_UNIT" "install.sh")
+# Nice to have (offline uninstall) but never required: a missing or failed
+# download of these must not stop an install.
+OPTIONAL_FILES=("uninstall.sh")
 
 TARGET_SCRIPT="$TARGET_DIR/$HOOK_NAME"
 
@@ -151,6 +154,7 @@ resolve_paths() {
     # The systemd service always re-runs the persistent copy stored in
     # SLEEP_FIX_DIR, however this script was originally invoked.
     INSTALL_SCRIPT="$SLEEP_FIX_DIR/install.sh"
+    UNINSTALL_DEST="$SLEEP_FIX_DIR/uninstall.sh"
 }
 
 # True when SCRIPT_DIR holds a readable copy of every source file.
@@ -170,6 +174,14 @@ download_sources() {
         info "  Downloading $f"
         curl -fsSL --connect-timeout 10 --max-time 60 "$GITHUB_RAW/$f" -o "$TMP_DIR/$f" || return 1
         [ -s "$TMP_DIR/$f" ] || return 1
+    done
+    for f in "${OPTIONAL_FILES[@]}"; do
+        info "  Downloading $f (optional)"
+        if ! curl -fsSL --connect-timeout 10 --max-time 60 "$GITHUB_RAW/$f" -o "$TMP_DIR/$f" \
+                || [ ! -s "$TMP_DIR/$f" ]; then
+            rm -f "$TMP_DIR/$f"
+            info "  $f unavailable; skipping"
+        fi
     done
 }
 
@@ -208,6 +220,13 @@ stage_files() {
     copy_file "$FILES_DIR/$HOOK_NAME" "$HOOK_DEST"
     chown root:root "$HOOK_DEST"
     chmod 755 "$HOOK_DEST"
+
+    if [ -r "$FILES_DIR/uninstall.sh" ]; then
+        info "Writing uninstall.sh -> $UNINSTALL_DEST"
+        copy_file "$FILES_DIR/uninstall.sh" "$UNINSTALL_DEST"
+        chown root:root "$UNINSTALL_DEST"
+        chmod 755 "$UNINSTALL_DEST"
+    fi
 
     info "Writing systemd service unit: $SERVICE_DEST"
     copy_file "$FILES_DIR/$SERVICE_UNIT" "$SERVICE_DEST"
@@ -272,6 +291,7 @@ main() {
 
     link_system_files
     info "Installation complete: original hook at $HOOK_DEST"
+    [ ! -x "$UNINSTALL_DEST" ] || info "To uninstall later: sudo $UNINSTALL_DEST"
     register_timer
     info "Done. The hook will be automatically reinstalled on every boot."
 }
